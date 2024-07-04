@@ -1,0 +1,91 @@
+goboot:
+  application:
+    name: go-server
+  profiles:
+    active: dev
+  server:
+    port: 8080
+    bannerPath: ./banner.txt
+    staticResources:
+      enable: true
+      items:
+        - urlPath: /dist
+          filePath: ./dist
+          tryFiles: index.htm index.html
+        - urlPath: /static
+          filePath: ./static
+          tryFiles: index.htm index.html
+    templateResources:
+      enable: false
+      filePath: ./templates/**/*.html
+    session:
+      enable: true
+      # cookie/redis
+      impl: cookie
+      secretKey: 123456
+      sessionKey: go-session
+    redis:
+      enable: false
+      host: 127.0.0.1
+      port: 6379
+      password: ltb12315
+      database: 0
+    datasource:
+      enable: false
+      # mysql/postgres
+      driver: mysql
+      host: 127.0.0.1
+      port: 6379
+      # url: user:password@tcp(localhost:5555)/dbname?tls=skip-verify&autocommit=true
+      url: root:123456@tcp(127.0.0.1:3306)/test_db?charset=utf8mb4&parseTime=True&loc=Local
+      username: root
+      password: 123456
+      database: test_db
+    gorm:
+      enable: false
+    https:
+      enable: false
+      pemPath: ./https/server.pem
+      keyPath: ./https/server.key
+    gzip:
+      enable: false
+      # BestCompression/BestSpeed/DefaultCompression/NoCompression
+      level: DefaultCompression
+      excludeExtensions:
+        - .mp4
+      excludePaths:
+        - /api/
+      excludePathRegexes:
+        - ".*download"
+    proxy:
+      enable: false
+      items:
+        - name: github.com
+          path: /github/
+          redirect: http://github.com/
+    mapping:
+      enable: false
+      items:
+        - /api/
+    cors:
+      enable: true
+      allowAllOrigins: true
+      allowOrigins:
+        - http://localhost/
+      allowMethods:
+        - GET
+        - PUT
+        - DELETE
+        - POST
+        - PATCH
+        - OPTIONS
+      allowHeaders:
+        - token
+        - Origin
+        - secure
+        - Auth
+      exposeHeaders:
+        - Content-Length
+      allowCredentials: true
+      maxAgeMinutes: 0
+
