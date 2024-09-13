@@ -9,17 +9,17 @@ goboot:
     staticResources:
       enable: true
       items:
-        - urlPath: /dist
-          filePath: ./dist
+        - urlPath: /web
+          filePath: ./web/
           tryFiles: index.htm index.html
-        - urlPath: /static
-          filePath: ./static
+        - urlPath: /app
+          filePath: ./app/
           tryFiles: index.htm index.html
     templateResources:
       enable: false
       filePath: ./templates/**/*.html
     session:
-      enable: true
+      enable: false
       # cookie/redis
       impl: cookie
       secretKey: 123456
@@ -53,6 +53,10 @@ goboot:
       level: DefaultCompression
       excludeExtensions:
         - .mp4
+        - .mp3
+        - .m3u8
+        - .xlsx
+        - .xls
       excludePaths:
         - /api/
       excludePathRegexes:
@@ -60,9 +64,12 @@ goboot:
     proxy:
       enable: false
       items:
-        - name: github.com
-          path: /github/
-          redirect: http://github.com/
+        - name: baidu
+          path: /proxy/baidu/
+          redirect: https://www.baidu.com/
+        - name: bilibili
+          path: /proxy/bilibili/
+          redirect: https://www.bilibili.com/
     mapping:
       enable: false
       items:

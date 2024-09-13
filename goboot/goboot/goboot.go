@@ -10,7 +10,7 @@ package goboot
 // go get github.com/gin-contrib/gzip
 // go get github.com/gin-contrib/cors
 // go get github.com/gin-contrib/sessions
-// go get github.com/go-yaml/yaml
+// go get gopkg.in/yaml.v3
 // go get github.com/redis/go-redis/v9
 // go get github.com/gin-contrib/sessions/redis@v0.0.5
 // go get github.com/google/uuid
@@ -46,6 +46,7 @@ import (
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 	goredis "github.com/redis/go-redis/v9"
+	"gopkg.in/yaml.v3"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -899,9 +900,10 @@ func GetConfigApplication(config *GobootConfig, listener *GobootLifecycleListene
 		LogInfo("goboot enable %v proxy(s)", len(server.Proxy.Items))
 		for _, item := range server.Proxy.Items {
 			LogInfo("goboot proxy, path: %v", item)
+			redirect := item.Redirect
 			engine.Any(fmt.Sprintf("%v*proxyPath", item.Path), func(c *gin.Context) {
 				proxyPath := c.Param("proxyPath")
-				ProxyHandler(c, item, proxyPath)
+				ProxyHandler(c, redirect, proxyPath)
 			})
 		}
 	}
@@ -1117,8 +1119,8 @@ func HandleMappingMethodArg(arg reflect.Type, boot *GobootApplication, c *gin.Co
 }
 
 // 处理代理请求
-func ProxyHandler(c *gin.Context, proxy ProxyItem, proxyPath string) {
-	remote, err := url.Parse(proxy.Redirect)
+func ProxyHandler(c *gin.Context, redirect string, proxyPath string) {
+	remote, err := url.Parse(redirect)
 	if err != nil {
 		panic(err)
 	}
