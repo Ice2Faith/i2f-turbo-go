@@ -900,12 +900,8 @@ func GetConfigApplication(config *GobootConfig, listener *GobootLifecycleListene
 		LogInfo("goboot enable %v proxy(s)", len(server.Proxy.Items))
 		for _, item := range server.Proxy.Items {
 			LogInfo("goboot proxy, path: %v", item)
-			redirect := item.Redirect
-			engine.Any(fmt.Sprintf("%v*proxyPath", item.Path), func(c *gin.Context) {
-				proxyPath := c.Param("proxyPath")
-				ProxyHandler(c, redirect, proxyPath)
-			})
 		}
+		engine.Use(ProxyMiddleware(server.Proxy))
 	}
 
 	LogInfo("goboot before mapping.")
@@ -916,17 +912,36 @@ func GetConfigApplication(config *GobootConfig, listener *GobootLifecycleListene
 		LogInfo("goboot enbale %v mapping(s)", len(server.Mapping.Items))
 		for _, item := range server.Mapping.Items {
 			LogInfo("goboot mapping, path: %v", item)
-			engine.Any(fmt.Sprintf("%v*proxyPath", item), func(c *gin.Context) {
-				proxyPath := c.Param("proxyPath")
-				MappingHandler(boot, c, proxyPath, boot.Handlers...)
-			})
 		}
+		engine.Use(MappingMiddleware(server.Mapping, boot))
 	}
 
 	LogInfo("goboot prepared.")
 	invokeListeners(boot, boot.Listeners.OnPrepared)
 
 	return boot
+}
+
+// 映射请求中间件
+func MappingMiddleware(mapping Mapping, boot *GobootApplication) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		hasMatched := false
+		// 检查路径前缀匹配
+		urlPath := c.Request.URL.Path
+		for _, item := range mapping.Items {
+			if strings.HasPrefix(urlPath, item) {
+				hasMatched = true
+				proxyPath := urlPath[len(item):]
+				LogInfo("goboot mapping, path: %v", item)
+				MappingHandler(boot, c, proxyPath, boot.Handlers...)
+			}
+		}
+		if !hasMatched {
+			// 如果不匹配，继续执行
+			c.Next()
+		}
+
+	}
 }
 
 // GET,PUT,POST,DELETE,PATCH
@@ -1116,6 +1131,29 @@ func HandleMappingMethodArg(arg reflect.Type, boot *GobootApplication, c *gin.Co
 
 	// 其他类型，则绑定参数失败
 	return reflect.ValueOf(false), false
+}
+
+// 代理请求中间件
+func ProxyMiddleware(proxy Proxy) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		hasMatched := false
+		// 检查路径前缀匹配
+		urlPath := c.Request.URL.Path
+		for _, item := range proxy.Items {
+			if strings.HasPrefix(urlPath, item.Path) {
+				hasMatched = true
+				redirect := item.Redirect
+				proxyPath := urlPath[len(item.Path):]
+				LogInfo("goboot proxy, path: %v", item)
+				ProxyHandler(c, redirect, proxyPath)
+			}
+		}
+		if !hasMatched {
+			// 如果不匹配，继续执行
+			c.Next()
+		}
+
+	}
 }
 
 // 处理代理请求

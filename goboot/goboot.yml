@@ -4,10 +4,10 @@ goboot:
   profiles:
     active: dev
   server:
-    port: 8080
+    port: 9999
     bannerPath: ./banner.txt
     staticResources:
-      enable: true
+      enable: false
       items:
         - urlPath: /web
           filePath: ./web/
@@ -62,14 +62,15 @@ goboot:
       excludePathRegexes:
         - ".*download"
     proxy:
-      enable: false
+      enable: true
       items:
-        - name: baidu
-          path: /proxy/baidu/
-          redirect: https://www.baidu.com/
         - name: bilibili
-          path: /proxy/bilibili/
-          redirect: https://www.bilibili.com/
+          path: /ui/
+          redirect: http://localhost:8081/ui/
+        - name: baidu
+          path: /
+          redirect: http://localhost:8080/
+        
     mapping:
       enable: false
       items:
