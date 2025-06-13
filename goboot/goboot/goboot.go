@@ -25,14 +25,20 @@ import (
 	"crypto/tls"
 	"database/sql"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"math"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"reflect"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -340,6 +346,8 @@ type Server struct {
 	Redis             Redis             `yaml:"redis"`
 	Datasource        Datasource        `yaml:"datasource"`
 	Gorm              Gorm              `yaml:"gorm"`
+
+	FileServer FileServer `yaml:"fileServer"`
 }
 
 // 静态资源项配置
@@ -892,6 +900,14 @@ func GetConfigApplication(config *GobootConfig, listener *GobootLifecycleListene
 		engine.LoadHTMLGlob(server.TemplateResources.FilePath)
 	}
 
+	LogInfo("goboot before file-server.")
+
+	// 配置文件服务器
+	if server.FileServer.Enable {
+		LogInfo("goboot enable file-server at rootPath: %v", server.FileServer.RootPath)
+		engine.Use(FileServerMiddleware(server.FileServer))
+	}
+
 	LogInfo("goboot before proxy.")
 	invokeListeners(boot, boot.Listeners.OnBeforeProxy)
 
@@ -1182,6 +1198,725 @@ func ProxyHandler(c *gin.Context, redirect string, proxyPath string) {
 	}
 
 	client.ServeHTTP(c.Writer, c.Request)
+}
+
+// 文件服务配置
+type FileServer struct {
+	Enable          bool   `yaml:"enable"`
+	RootPath        string `yaml:"rootPath"` // 文件根路径
+	UrlPath         string `yaml:"urlPath"`
+	DisableUpload   bool   `yaml:"disableUpload"`   // 是否禁止上传
+	DisableDownload bool   `yaml:"disableDownload"` // 是否禁止下载
+	DisableList     bool   `yaml:"disableList"`     // 是否禁止举出文件
+	DisableBrowser  bool   `yaml:"disableBrowser"`  // 是否禁止浏览文件
+}
+
+type FileInfoItem struct {
+	Name       string `json:"name"`       // 文件类型
+	Path       string `json:"path"`       // 相对路径
+	Size       int64  `json:"size"`       // 文件大小（字节）
+	SizeText   string `json:"sizeText"`   // 文件大小（带单位描述）
+	IsDir      bool   `json:"isDir"`      // 是否为目录
+	ModifyTime string `json:"modifyTime"` // 更新时间
+}
+
+func ConvertAsHumanSizeText(size int64) string {
+	if size < 0 {
+		return "invalid"
+	}
+	if size == 0 {
+		return "0B"
+	}
+
+	units := []string{"B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"}
+	f := float64(size)
+	i := 0
+
+	for ; i < len(units)-1; i++ {
+		if f < 1024 {
+			break
+		}
+		f /= 1024
+	}
+
+	if f == math.Floor(f) {
+		return fmt.Sprintf("%d%s", int64(f), units[i])
+	}
+	return fmt.Sprintf("%.2f%s", f, units[i])
+}
+
+func ListFiles(fullPath string, rootPath string) ([]FileInfoItem, error) {
+
+	var files []FileInfoItem
+
+	items, err := os.ReadDir(fullPath)
+	for _, item := range items {
+
+		info, err := item.Info()
+		if err != nil {
+			return files, err
+		}
+
+		// 获取文件完整路径
+		path := filepath.Join(fullPath, info.Name())
+
+		// 获取相对路径
+		relPath, err := filepath.Rel(rootPath, path)
+		if err != nil {
+			return files, err
+		}
+
+		// 添加文件信息到列表
+		files = append(files, FileInfoItem{
+			Path:       strings.ReplaceAll(relPath, "\\", "/"),
+			Name:       info.Name(),
+			Size:       info.Size(),
+			SizeText:   ConvertAsHumanSizeText(info.Size()),
+			IsDir:      info.IsDir(),
+			ModifyTime: info.ModTime().Format("2006-01-02 15:04:05"),
+		})
+	}
+
+	// 排序逻辑：目录在前，文件在后，同类型按字母顺序
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].IsDir != files[j].IsDir {
+			return files[i].IsDir // 目录优先
+		}
+		return files[i].Name < files[j].Name // 同类型按字母顺序
+	})
+	return files, err
+}
+
+func SliceContains(list []string, elem string) bool {
+	for _, item := range list {
+		if item == elem {
+			return true
+		}
+	}
+	return false
+}
+
+func FileServerMiddleware(server FileServer) gin.HandlerFunc {
+
+	pathBase := server.UrlPath
+	if pathBase == "" {
+		pathBase = "/file-server"
+	}
+	pathBase = strings.TrimSuffix(pathBase, "/")
+
+	if !strings.HasPrefix(pathBase, "/") {
+		pathBase = "/" + pathBase
+	}
+	if pathBase == "/" {
+		pathBase = ""
+	}
+	pathList := pathBase + "/list"
+	pathUpload := pathBase + "/upload"
+	pathDownload := pathBase + "/download"
+	pathBrowser := pathBase + "/browser"
+	rootPath := server.RootPath
+	if server.Enable {
+		LogInfo("file-server enabled, url: %v --> path: %v", pathBase, rootPath)
+		if !server.DisableBrowser {
+			LogInfo("file-server enabled browser web-ui: %v, such %v/videos/cat to view /videos/cat files", pathBrowser, pathBrowser)
+		}
+		if !server.DisableList {
+			LogInfo("file-server enabled list api: GET %v/{subPath} , such GET %v/videos/cat", pathList, pathList)
+		}
+		if !server.DisableUpload {
+			LogInfo("file-server enabled upload api: POST %v/{subPath} with file={binary}, such POST %v/video/dog file=dog.mp4", pathUpload, pathUpload)
+		}
+		if !server.DisableDownload {
+			LogInfo("file-server enabled download api: GET %v/{subPath}[?type=inline], such GET %v/video/dog/dog.mp4 to download file, GET %v/video/dog/dog.mp4?type=inline to preview in browser", pathDownload, pathDownload, pathDownload)
+		}
+	}
+	return func(c *gin.Context) {
+		// 如果未开启文件服务，直接跳过
+		if !server.Enable {
+			c.Next()
+			return
+		}
+		// 检查路径前缀匹配
+		urlPath := c.Request.URL.Path
+		if !server.DisableBrowser && strings.HasPrefix(urlPath, pathBrowser) {
+			filePath := urlPath[len(pathBrowser):]
+			LogInfo("goboot file-server, browser path: %v", filePath)
+			fullPath := filepath.Join(rootPath, filePath)
+			regularFilePath := strings.ReplaceAll(filePath, "\\", "/")
+
+			// 检查文件是否在允许的目录内
+			allowedPath, _ := filepath.Abs(rootPath)
+			absPath, _ := filepath.Abs(fullPath)
+			if !strings.HasPrefix(absPath, allowedPath) {
+				c.JSON(500, ApiError(500, filePath+" not allow access!"))
+				return
+			}
+
+			// 检查文件是否存在
+			info, err := os.Stat(fullPath)
+			if os.IsNotExist(err) {
+				c.JSON(404, ApiError(500, filePath+" not exists!"))
+				return
+			}
+
+			// 检查是否是目录
+			if !info.IsDir() {
+				c.JSON(500, ApiError(500, filePath+" is not directory!"))
+				return
+			}
+
+			files, err := ListFiles(fullPath, rootPath)
+
+			if err != nil {
+				c.JSON(500, ApiError(500, filePath+" list error!"))
+				return
+			}
+			if info != nil {
+				parentDir := filepath.Dir(fullPath)
+				relPath, _ := filepath.Rel(rootPath, parentDir)
+				parant, _ := os.Stat(parentDir)
+				files = append([]FileInfoItem{
+					FileInfoItem{
+						Path:       strings.ReplaceAll(relPath, "\\", "/"),
+						Name:       "..",
+						Size:       parant.Size(),
+						SizeText:   ConvertAsHumanSizeText(parant.Size()),
+						IsDir:      parant.IsDir(),
+						ModifyTime: parant.ModTime().Format("2006-01-02 15:04:05"),
+					},
+				}, files...)
+			}
+
+			if info != nil {
+				curr := info
+				relPath, _ := filepath.Rel(rootPath, fullPath)
+				files = append([]FileInfoItem{
+					FileInfoItem{
+						Path:       strings.ReplaceAll(relPath, "\\", "/"),
+						Name:       ".",
+						Size:       curr.Size(),
+						SizeText:   ConvertAsHumanSizeText(curr.Size()),
+						IsDir:      curr.IsDir(),
+						ModifyTime: curr.ModTime().Format("2006-01-02 15:04:05"),
+					},
+				}, files...)
+			}
+
+			html := `
+			<html lang="zh">
+    <head>
+        <meta charset="UTF-8"/>
+		<meta name="viewport" content="width=device-width, user-scalable=yes, initial-scale=1.0, minimum-scale=0.5, maximum-scale=2.0">
+        <title>
+			`
+			html = html + regularFilePath
+			html = html +
+				`
+			</title>
+		<style>
+        .file-page *{
+            box-sizing: content-box;
+            margin: 0;
+            padding: 0;
+            font-size: 16px;
+        }
+		@media screen and (max-width:320px) {
+			.file-page *{
+            	font-size: 6px;
+        	}
+		}
+		@media screen and (min-width:320px) and (max-width:480px) {
+			.file-page *{
+            	font-size: 8px;
+        	}
+		}
+		@media screen and (min-width:480px) and (max-width:640px) {
+			.file-page *{
+            	font-size: 10px;
+        	}
+		}
+		@media screen and (min-width:640px) and (max-width:960px) {
+			.file-page *{
+            	font-size: 14px;
+        	}
+		}
+        .file-page button{
+            border: none;
+            outline: none;
+            padding: 3px 5px;
+            background: dodgerblue;
+            color: white;
+            border-radius: 3px;
+        }
+        .file-page button:hover{
+            background: deepskyblue;
+        }
+        .file-page button:active{
+            background: orange;
+            transform: scale(0.9);
+        }
+		.file-page button:disabled{
+			filter: grayscale(0.6);
+		}
+        .file-path{
+            font-size: 22px;
+            font-weight: bold;
+        }
+        .file-divider{
+            margin: 5px 3px;
+        }
+        .file-list{
+            list-style-type: none;
+        }
+        .file-item{
+            border-bottom: solid 1px #ddd;
+            padding: 3px 2px;
+        }
+        .file-item span{
+            display: inline-block;
+        }
+        .file-type{
+            width: 3%;
+        }
+        .file-name{
+            width: 43%;
+            color: dodgerblue;
+        }
+        .file-size{
+            width: 10%;
+        }
+        .file-time{
+            width: 15%;
+        }
+        .file-operation{
+            width: 25%;
+        }
+        .file-operation button{
+            display: inline-block;
+        }
+		.file-upload{
+            float: right;
+            background: limegreen !important;
+        }
+    </style>
+    </head>
+    <body>
+        <div class="file-page">
+            <div class="file-path">`
+			html = html + regularFilePath
+			if !server.DisableUpload {
+				html = html + `
+				<button class="file-upload" id="fileUploadButton" onclick="uploadFile()">upload</button>
+                <input class="file-upload" type="file" id="fileInputDom" onchange="onFileChange(this)" style="display: none;"/>
+				`
+			}
+			html = html +
+				`</div>
+            <hr class="file-divider"/>
+            <ul class="file-list">`
+
+			for _, item := range files {
+				html = html + `<li class="file-item">
+                    <span class="file-type">`
+				if item.IsDir {
+					html = html + "+"
+				} else {
+					html = html + "-"
+				}
+				html = html + `</span>
+                    <span class="file-name"`
+
+				openFlag := true
+				if server.DisableDownload && !item.IsDir {
+					openFlag = false
+				}
+				if openFlag {
+					html = html + ` onclick="openFile(`
+					if item.IsDir {
+						html = html + "true"
+					} else {
+						html = html + "false"
+					}
+					html = html + `,'`
+					html = html + item.Path
+					html = html + `')"`
+				}
+
+				html = html + `>`
+				html = html + item.Name
+				html = html + `</span>
+                    <span class="file-size">`
+				html = html + item.SizeText
+				html = html + `</span>
+                    <span class="file-time">`
+				html = html + item.ModifyTime
+				html = html + `</span>
+                    <span class="file-operation">`
+				if !server.DisableDownload {
+					if !item.IsDir {
+						html = html + `<button class="file-download" onclick="downloadFile(false,'`
+						html = html + item.Path
+						html = html + `')">download</button>`
+					}
+				}
+
+				html = html + `
+                    </span>
+                </li>
+				`
+			}
+
+			html = html + `
+            </ul>
+        </div>
+        
+    </body>
+    <script>
+        const pathBase = "`
+			html = html + pathBase
+			html = html + `"
+
+        const pathList = "`
+			html = html + pathList
+			html = html + `"
+
+        const pathUpload = "`
+			html = html + pathUpload
+			html = html + `"
+
+        const pathDownload = "`
+			html = html + pathDownload
+			html = html + `"
+
+        const pathBrowser = "`
+			html = html + pathBrowser
+			html = html + `"
+
+        function getBasePath(){
+            let basePath=''
+            let curPath=window.location.pathname
+            let idx = curPath.indexOf(pathBrowser)
+            if(idx>=0){
+                basePath=curPath.substring(0,idx)
+            }
+            return basePath
+        }
+        function openFile(isDir,path){
+            if(isDir){
+                let nextPath='/'+pathBrowser+'/'+encodeURI(path)
+                nextPath=nextPath.replaceAll('//','/')
+                window.location.href=getBasePath()+nextPath
+            }else{`
+			if !server.DisableDownload {
+				html = html + `
+                let nextPath='/'+pathDownload+'/'+encodeURI(path)
+                nextPath=nextPath.replaceAll('//','/')
+                window.location.href=getBasePath()+nextPath+"?type=inline"
+				`
+			} else {
+				html = html + `
+					debugger
+				`
+			}
+			html = html + `
+            }
+        }
+        function downloadFile(isDir,path){
+            if(isDir){
+                openFile(isDir,path)
+            }else{`
+			if !server.DisableDownload {
+				html = html + `
+                let nextPath='/'+pathDownload+'/'+encodeURI(path)
+                nextPath=nextPath.replaceAll('//','/')
+                let url=getBasePath()+nextPath+"?type=attachment"
+                let name=path
+                let idx=path.lastIndexOf('/')
+                if(idx>=0){
+                    name=path.substring(idx+1)
+                }
+                let dom = document.createElement('a');
+                dom.href=url
+                dom.download=name
+                dom.style.display='none'
+                document.body.append(dom)
+                dom.click()
+                document.body.removeChild(dom)
+				`
+			} else {
+				html = html + `
+					debugger
+				`
+			}
+			html = html + `
+
+            }
+
+        } `
+			if !server.DisableUpload {
+				html = html + `
+			function uploadFile(){
+				var dom = document.querySelector('#fileInputDom');
+				dom.click()
+			}
+			function onFileChange(dom){
+				console.log(dom,dom.files,dom.files[0])
+				let url=window.location.href
+				url=url.replace(pathBrowser,pathUpload)
+				let data =new FormData();
+				data.append('file',dom.files[0]);
+
+				const option = {
+					method: 'post',
+					mode: 'cors',
+					body: data
+				};
+				let btnDom=document.querySelector("#fileUploadButton")
+				btnDom.setAttribute('disabled','disabled')
+				fetch(url, option)
+					.then(res=>res.json())
+					.then(function (data) {
+					console.log('imgUrl', data);
+					location.reload()
+				}).finally(()=>{
+					btnDom.removeAttribute("disabled")
+				})
+
+			}
+				`
+			}
+
+			html = html + `
+    </script>
+    
+</html>
+			`
+
+			c.Data(200, "text/html; charset=utf-8", []byte(html))
+			return
+		}
+		if !server.DisableList && strings.HasPrefix(urlPath, pathList) {
+			filePath := urlPath[len(pathList):]
+			LogInfo("goboot file-server, list path: %v", filePath)
+			fullPath := filepath.Join(rootPath, filePath)
+
+			// 检查文件是否在允许的目录内
+			allowedPath, _ := filepath.Abs(rootPath)
+			absPath, _ := filepath.Abs(fullPath)
+			if !strings.HasPrefix(absPath, allowedPath) {
+				c.JSON(200, ApiError(500, filePath+" not allow access!"))
+				return
+			}
+
+			// 检查文件是否存在
+			info, err := os.Stat(fullPath)
+			if os.IsNotExist(err) {
+				c.JSON(200, ApiError(500, filePath+" not exists!"))
+				return
+			}
+
+			// 检查是否是目录
+			if !info.IsDir() {
+				c.JSON(200, ApiError(500, filePath+" is not directory!"))
+				return
+			}
+
+			files, err := ListFiles(fullPath, rootPath)
+
+			if err != nil {
+				c.JSON(200, ApiError(500, filePath+" list error!"))
+				return
+			}
+
+			c.JSON(200, ApiOk(files))
+			return
+		}
+		if !server.DisableUpload && strings.HasPrefix(urlPath, pathUpload) {
+			filePath := urlPath[len(pathUpload):]
+			LogInfo("goboot file-server, upload path: %v", filePath)
+			fullPath := filepath.Join(rootPath, filePath)
+
+			// 检查文件是否在允许的目录内
+			allowedPath, _ := filepath.Abs(rootPath)
+			absPath, _ := filepath.Abs(fullPath)
+			if !strings.HasPrefix(absPath, allowedPath) {
+				c.JSON(500, ApiError(500, filePath+" not allow access!"))
+				return
+			}
+
+			// 检查文件是否存在
+			info, err := os.Stat(fullPath)
+			if os.IsNotExist(err) {
+				c.JSON(404, ApiError(500, filePath+" not exists!"))
+				return
+			}
+
+			// 检查是否是目录
+			if !info.IsDir() {
+				c.JSON(500, ApiError(500, filePath+" is directory!"))
+				return
+			}
+
+			file, err := c.FormFile("file")
+
+			savePath := filepath.Join(fullPath, file.Filename)
+			err = c.SaveUploadedFile(file, savePath)
+
+			relPath, _ := filepath.Rel(rootPath, savePath)
+			c.JSON(200, ApiOk(relPath))
+			return
+		}
+		if !server.DisableDownload && strings.HasPrefix(urlPath, pathDownload) {
+			filePath := urlPath[len(pathDownload):]
+			LogInfo("goboot file-server, download path: %v", filePath)
+			fullPath := filepath.Join(rootPath, filePath)
+
+			// 检查文件是否在允许的目录内
+			allowedPath, _ := filepath.Abs(rootPath)
+			absPath, _ := filepath.Abs(fullPath)
+			if !strings.HasPrefix(absPath, allowedPath) {
+				c.JSON(500, ApiError(500, filePath+" not allow access!"))
+				return
+			}
+
+			// 检查文件是否存在
+			info, err := os.Stat(fullPath)
+			if os.IsNotExist(err) {
+				c.JSON(404, ApiError(500, filePath+" not exists!"))
+				return
+			}
+
+			// 检查是否是目录
+			if info.IsDir() {
+				c.JSON(500, ApiError(500, filePath+" is directory!"))
+				return
+			}
+
+			// 打开文件
+			file, err := os.Open(fullPath)
+			if err != nil {
+				c.JSON(500, ApiError(500, filePath+" open file error!"))
+				return
+			}
+			defer file.Close()
+
+			// 获取是否强制下载
+			downloadType := c.Query("type")
+
+			// 获取文件扩展名和MIME类型
+			ext := filepath.Ext(fullPath)
+			mimeType := mime.TypeByExtension(ext)
+			if mimeType == "" {
+				mimeType = "application/octet-stream"
+			}
+
+			// 不是内联模式，默认下载
+			if !SliceContains([]string{
+				"inline", "preview", "view",
+			}, downloadType) {
+				c.Header("Content-Disposition", "attachment; filename=\""+info.Name()+"\"")
+			}
+
+			// 已知类型（图片、音视频等）由浏览器决定如何处理
+			c.Header("Content-Type", mimeType)
+
+			if SliceContains([]string{
+				"inline", "preview", "view",
+			}, downloadType) {
+				suffix := strings.ToLower(filepath.Ext(info.Name()))
+				if SliceContains([]string{
+					".txt", ".log", ".md",
+					".bat", ".sh",
+					".css", ".js", ".ts", ".sass", ".less",
+					".yml", ".yaml", ".properties",
+					".xml", ".json", ".jsonl", ".jsonc",
+					".sql",
+					".c", ".h", ".cpp", ".hpp", ".hxx",
+					".java", ".py", ".go", ".pl",
+					".gitignore", ".gitattributes",
+					".vue",
+				}, suffix) {
+					c.Header("Content-Type", "text/plain")
+					c.Status(http.StatusOK)
+					c.Header("Content-Length", strconv.FormatInt(info.Size(), 10))
+					_, err = io.Copy(c.Writer, file)
+					if err != nil {
+						c.JSON(500, ApiError(500, filePath+" send file error!"))
+						return
+					}
+					return
+				}
+			}
+
+			// 处理Range请求
+			rangeHeader := c.GetHeader("Range")
+			if rangeHeader != "" {
+				// 解析Range头（仅支持bytes单位）
+				var start, end int64
+				parseRange := false
+				ranges := strings.Split(rangeHeader, "=")[1]
+				parts := strings.Split(ranges, "-")
+
+				if len(parts) == 2 {
+					// 处理起始位置
+					if parts[0] != "" {
+						start, _ = strconv.ParseInt(parts[0], 10, 64)
+					} else {
+						// 处理后缀范围（如：-500 bytes）
+						if parts[1] != "" {
+							suffix, _ := strconv.ParseInt(parts[1], 10, 64)
+							start = info.Size() - suffix
+							end = info.Size() - 1
+							parseRange = true
+						}
+					}
+
+					// 处理结束位置
+					if parts[1] != "" && parseRange {
+						end, _ = strconv.ParseInt(parts[1], 10, 64)
+					} else if parts[1] != "" {
+						end, _ = strconv.ParseInt(parts[1], 10, 64)
+						parseRange = true
+					} else {
+						end = info.Size() - 1
+						parseRange = true
+					}
+
+					// 校验范围有效性
+					if parseRange && start <= end && end < info.Size() {
+						// 设置响应头
+						c.Status(http.StatusPartialContent)
+						c.Header("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, info.Size()))
+						c.Header("Accept-Ranges", "bytes")
+						c.Header("Content-Length", strconv.FormatInt(end-start+1, 10))
+
+						// 使用SectionReader高效读取片段
+						sectionReader := io.NewSectionReader(file, start, end-start+1)
+						_, err = io.Copy(c.Writer, sectionReader)
+						if err != nil {
+							c.JSON(500, ApiError(500, filePath+" send section error!"))
+							return
+						}
+						return
+					}
+				}
+			}
+
+			// 无Range请求，返回完整文件
+			c.Status(http.StatusOK)
+			c.Header("Content-Length", strconv.FormatInt(info.Size(), 10))
+			_, err = io.Copy(c.Writer, file)
+			if err != nil {
+				c.JSON(500, ApiError(500, filePath+" send file error!"))
+				return
+			}
+
+			return
+		}
+		// 如果不匹配，继续执行
+		c.Next()
+
+	}
 }
 
 // 启动应用

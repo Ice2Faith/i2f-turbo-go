@@ -74,6 +74,14 @@ goboot:
       enable: false
       items:
         - /api/
+    fileServer:
+      enable: false
+      rootPath: ./file-server
+      urlPath: /file-server
+      disableUpload: true
+      disableDownload: false
+      disableList: false
+      disableBrowser: false
     cors:
       enable: true
       allowAllOrigins: true
