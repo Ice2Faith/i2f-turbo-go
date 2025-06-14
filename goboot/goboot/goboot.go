@@ -1471,9 +1471,11 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
         .file-item{
             border-bottom: solid 1px #ddd;
             padding: 3px 2px;
+			display: flex;
         }
         .file-item span{
-            display: inline-block;
+            display: flex;
+			align-items: center;
         }
         .file-type{
             width: 3%;
