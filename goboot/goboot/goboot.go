@@ -24,6 +24,7 @@ import (
 	"context"
 	"crypto/tls"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -1220,6 +1221,18 @@ type FileInfoItem struct {
 	ModifyTime string `json:"modifyTime"` // 更新时间
 }
 
+func Any2JsonString(obj any) string {
+	// 将 struct 转为 JSON 字符串
+	jsonBytes, err := json.Marshal(obj) // 返回 []byte
+	if err != nil {
+		panic(err)
+	}
+
+	// 转换为字符串
+	jsonStr := string(jsonBytes)
+	return jsonStr
+}
+
 func ConvertAsHumanSizeText(size int64) string {
 	if size < 0 {
 		return "invalid"
@@ -1515,60 +1528,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 			html = html +
 				`</div>
             <hr class="file-divider"/>
-            <ul class="file-list">`
-
-			for _, item := range files {
-				html = html + `<li class="file-item">
-                    <span class="file-type">`
-				if item.IsDir {
-					html = html + "+"
-				} else {
-					html = html + "-"
-				}
-				html = html + `</span>
-                    <span class="file-name"`
-
-				openFlag := true
-				if server.DisableDownload && !item.IsDir {
-					openFlag = false
-				}
-				if openFlag {
-					html = html + ` onclick="openFile(`
-					if item.IsDir {
-						html = html + "true"
-					} else {
-						html = html + "false"
-					}
-					html = html + `,'`
-					html = html + item.Path
-					html = html + `')"`
-				}
-
-				html = html + `>`
-				html = html + item.Name
-				html = html + `</span>
-                    <span class="file-size">`
-				html = html + item.SizeText
-				html = html + `</span>
-                    <span class="file-time">`
-				html = html + item.ModifyTime
-				html = html + `</span>
-                    <span class="file-operation">`
-				if !server.DisableDownload {
-					if !item.IsDir {
-						html = html + `<button class="file-download" onclick="downloadFile(false,'`
-						html = html + item.Path
-						html = html + `')">download</button>`
-					}
-				}
-
-				html = html + `
-                    </span>
-                </li>
-				`
-			}
-
-			html = html + `
+            <ul class="file-list" id="fileListDom">
             </ul>
         </div>
         
@@ -1594,6 +1554,40 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 			html = html + pathBrowser
 			html = html + `"
 
+		const fileList = `
+			html = html + Any2JsonString(files)
+			html = html + `
+
+		function renderFileList(){
+			let listDom = document.querySelector("#fileListDom");
+			listDom.innerHTML=''
+			let html=''
+			for (let i = 0; i < fileList.length; i++) {
+				let item=fileList[i]
+				html+="<li class=\"file-item\">\n" +
+					"            <span class=\"file-type\">"+(item.isDir?"+":"-")+"</span>\n" +
+					"            <span class=\"file-name\" onclick=\"openFile("+(i)+")\">"+(item.name)+"</span>\n" +
+					"            <span class=\"file-size\">"+(item.sizeText)+"</span>\n" +
+					"            <span class=\"file-time\">"+(item.modifyTime)+"</span>\n" +
+					"            <span class=\"file-operation\">\n"
+			`
+			if !server.DisableDownload {
+				html = html + `
+				if(!item.isDir){
+							html+="   <button class=\"file-download\" onclick=\"downloadFile("+(i)+")\">download</button>\n" 
+						}
+				`
+			}
+			html = html + `
+				html+="            </span>\n" +
+					"        </li>"
+			}
+			
+			listDom.innerHTML=html
+		}
+
+		renderFileList()
+
         function getBasePath(){
             let basePath=''
             let curPath=window.location.pathname
@@ -1603,17 +1597,19 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
             }
             return basePath
         }
-        function openFile(isDir,path){
-            if(isDir){
-                let nextPath='/'+pathBrowser+'/'+encodeURI(path)
-                nextPath=nextPath.replaceAll('//','/')
-                window.location.href=getBasePath()+nextPath
-            }else{`
+        function openFile(index) {
+			let fileItem=fileList[index]
+			if (fileItem.isDir) {
+				let nextPath = '/' + pathBrowser + '/' + encodeURI(fileItem.path)
+				nextPath = nextPath.replaceAll('//', '/')
+				window.location.href = getBasePath() + nextPath
+			} else {
+			`
 			if !server.DisableDownload {
 				html = html + `
-                let nextPath='/'+pathDownload+'/'+encodeURI(path)
-                nextPath=nextPath.replaceAll('//','/')
-                window.location.href=getBasePath()+nextPath+"?type=inline"
+					let nextPath = '/' + pathDownload + '/' + encodeURI(fileItem.path)
+					nextPath = nextPath.replaceAll('//', '/')
+					window.location.href = getBasePath() + nextPath + "?type=inline"
 				`
 			} else {
 				html = html + `
@@ -1621,29 +1617,28 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 				`
 			}
 			html = html + `
-            }
-        }
-        function downloadFile(isDir,path){
-            if(isDir){
-                openFile(isDir,path)
-            }else{`
+			}
+		}
+
+		function downloadFile(index) {
+			let fileItem=fileList[index]
+			if (fileItem.isDir) {
+				openFile(index)
+			} else {
+			 `
 			if !server.DisableDownload {
 				html = html + `
-                let nextPath='/'+pathDownload+'/'+encodeURI(path)
-                nextPath=nextPath.replaceAll('//','/')
-                let url=getBasePath()+nextPath+"?type=attachment"
-                let name=path
-                let idx=path.lastIndexOf('/')
-                if(idx>=0){
-                    name=path.substring(idx+1)
-                }
-                let dom = document.createElement('a');
-                dom.href=url
-                dom.download=name
-                dom.style.display='none'
-                document.body.append(dom)
-                dom.click()
-                document.body.removeChild(dom)
+					let nextPath = '/' + pathDownload + '/' + encodeURI(fileItem.path)
+					nextPath = nextPath.replaceAll('//', '/')
+					let url = getBasePath() + nextPath + "?type=attachment"
+				
+					let dom = document.createElement('a');
+					dom.href = url
+					dom.download = fileItem.name
+					dom.style.display = 'none'
+					document.body.append(dom)
+					dom.click()
+					document.body.removeChild(dom)
 				`
 			} else {
 				html = html + `
@@ -1651,10 +1646,9 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 				`
 			}
 			html = html + `
+			}
 
-            }
-
-        } `
+		}`
 			if !server.DisableUpload {
 				html = html + `
 			function uploadFile(){
@@ -1806,8 +1800,13 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 			downloadType := c.Query("type")
 
 			// 获取文件扩展名和MIME类型
-			ext := filepath.Ext(fullPath)
+			ext := strings.ToLower(filepath.Ext(fullPath))
 			mimeType := mime.TypeByExtension(ext)
+			if mimeType == "" {
+				if ext == ".flv" {
+					mimeType = "video/flv"
+				}
+			}
 			if mimeType == "" {
 				mimeType = "application/octet-stream"
 			}
