@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"io/ioutil"
 	"math"
 	"mime"
@@ -1206,10 +1207,11 @@ type FileServer struct {
 	Enable          bool   `yaml:"enable"`
 	RootPath        string `yaml:"rootPath"` // 文件根路径
 	UrlPath         string `yaml:"urlPath"`
-	DisableUpload   bool   `yaml:"disableUpload"`   // 是否禁止上传
-	DisableDownload bool   `yaml:"disableDownload"` // 是否禁止下载
-	DisableList     bool   `yaml:"disableList"`     // 是否禁止举出文件
-	DisableBrowser  bool   `yaml:"disableBrowser"`  // 是否禁止浏览文件
+	EmbedStaticFs   fs.FS
+	DisableUpload   bool `yaml:"disableUpload"`   // 是否禁止上传
+	DisableDownload bool `yaml:"disableDownload"` // 是否禁止下载
+	DisableList     bool `yaml:"disableList"`     // 是否禁止举出文件
+	DisableBrowser  bool `yaml:"disableBrowser"`  // 是否禁止浏览文件
 }
 
 type FileInfoItem struct {
@@ -1327,6 +1329,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 	pathUpload := pathBase + "/upload"
 	pathDownload := pathBase + "/download"
 	pathBrowser := pathBase + "/browser"
+	pathPublic := pathBase + "/public"
 	rootPath := server.RootPath
 	if server.Enable {
 		LogInfo("file-server enabled, url: %v --> path: %v", pathBase, rootPath)
@@ -1351,6 +1354,12 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 		}
 		// 检查路径前缀匹配
 		urlPath := c.Request.URL.Path
+		if server.EmbedStaticFs != nil && strings.HasPrefix(urlPath, pathPublic) {
+			filePath := urlPath[len(pathPublic):]
+			httpFS := http.FS(server.EmbedStaticFs)
+			c.FileFromFS(filePath, httpFS)
+			return
+		}
 		if !server.DisableBrowser && strings.HasPrefix(urlPath, pathBrowser) {
 			filePath := urlPath[len(pathBrowser):]
 			LogInfo("goboot file-server, browser path: %v", filePath)
@@ -1550,6 +1559,10 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 			html = html + pathDownload
 			html = html + `"
 
+		const pathPublic = "`
+			html = html + pathPublic
+			html = html + `"
+
         const pathBrowser = "`
 			html = html + pathBrowser
 			html = html + `"
@@ -1608,8 +1621,29 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 			if !server.DisableDownload {
 				html = html + `
 					let nextPath = '/' + pathDownload + '/' + encodeURI(fileItem.path)
-					nextPath = nextPath.replaceAll('//', '/')
-					window.location.href = getBasePath() + nextPath + "?type=inline"
+					nextPath = nextPath.replaceAll('//', '/') + "?type=inline"
+		
+					let suffix=''
+					let name=fileItem.name || 'tmp'
+					let idx=name.lastIndexOf('.')
+					if(idx>=0){
+						suffix=name.substring(idx).toLowerCase()
+					}
+					if(['.mp4','.avi','.mkv','.rmvb','.wav','.flv'].includes(suffix)){
+						let idx=nextPath.indexOf('/download/')
+						if(idx>=0){
+							nextPath=nextPath.substring(idx)
+						}
+						nextPath='../..'+nextPath
+						let playPath='/' + pathPublic + '/viewer/video-player.html'
+						let playType='MP4'
+						if('.flv'==suffix){
+							playType='FLV'
+						}
+						nextPath = playPath.replaceAll('//', '/')+'?url='+encodeURIComponent(nextPath)+'&type='+playType
+					}
+		
+					window.location.href = getBasePath() + nextPath
 				`
 			} else {
 				html = html + `

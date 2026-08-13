@@ -1,7 +1,9 @@
 package main
 
 import (
+	"embed"
 	"goboot/goboot"
+	"io/fs"
 	"net/http"
 
 	// "time"
@@ -85,8 +87,18 @@ func (admin *AdminController) XP_Get(ctx *goboot.CtxResp) any {
 	return ctx.ApiJsonOk("ok")
 }
 
+//go:embed public/*
+var staticFiles embed.FS
+
 func main() {
-	app := goboot.GetDefaultApplication()
+	cfgFile := goboot.DefaultConfigFile
+	var listener *goboot.GobootLifecycleListener =nil
+	goboot.LogInfo("use config yaml %v initial application with listener %v", cfgFile, listener)
+	config := goboot.ResolveGobootConfig(cfgFile)
+
+	distFS, _ := fs.Sub(staticFiles, "public")
+	config.Goboot.Server.FileServer.EmbedStaticFs=distFS
+	app:= goboot.GetConfigApplication(config, listener)
 
 	// app.AddHandlers(&Api{}).
 	// 	AddHandlers(&User{})
