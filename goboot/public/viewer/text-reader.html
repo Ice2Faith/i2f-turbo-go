@@ -410,6 +410,7 @@
                 if (recognizeLangList.length == 0) {
                     lang = 'text'
                 }
+                this.lang=lang;
 
                 let dom = this.$refs.refEditor;
                 this.editor = CodeMirror.fromTextArea(dom, {  // 标识到textarea
