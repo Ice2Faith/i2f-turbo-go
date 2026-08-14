@@ -1,0 +1,162 @@
+<!--
+    本页面接受参数如下，分别用于指定hdr背景连接和模型连接
+    如果有指定modelType,则按照给定类型解析模型文件，如果为给定，则从modelUrl中提取模型文件名后缀，如果有的话
+    modelType 支持 fbx,glb,gltf
+    hdrUrl 不传递则使用默认
+    modelUrl 不传递也是用默认
+    .html?modelUrl=xxx&hdrUrl=xxx&modelType=glb
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Three.js 模型查看器</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #333; }
+        #info {
+            position: absolute; top: 10px; width: 100%; text-align: center;
+            color: white; font-family: sans-serif; pointer-events: none;
+            text-shadow: 1px 1px 2px black;
+        }
+    </style>
+
+    <!-- 1. 使用 importmap 定义模块的导入路径（类似于给库起别名） -->
+    <script type="importmap">
+        {
+        "imports": {
+            "three": "../lib/three@0.164.0/build/three.module.js",
+            "three/addons/": "../lib/three@0.164.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+<div id="info">正在加载 Three.js ...</div>
+
+<!-- 2. 核心：给 script 标签加上 type="module"，内部即可使用 import 语法 -->
+<script type="module">
+    // 从 importmap 定义好的路径中导入核心库和插件
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+    import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+
+    // 初始化场景、相机和渲染器
+    const scene = new THREE.Scene();
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(3, 2, 5);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.body.appendChild(renderer.domElement);
+
+    // 添加轨道控制器
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+
+    // 加载 HDRI 环境贴图 (PBR 核心)
+    function loadEnvironment(hdrUrl) {
+        const loader=new RGBELoader();
+
+        loader.load(hdrUrl, function (texture) {
+                texture.mapping = THREE.EquirectangularReflectionMapping;
+                scene.background = texture;
+                scene.environment = texture;
+                document.getElementById('info').innerText = '环境贴图加载完毕，正在加载模型...';
+
+            });
+    }
+
+
+    // 根据模型文件名匹配加载器
+    function matchModelLoader(modelUrl,modelType){
+        let loader=null
+        let extractor=function(resp){
+            return resp;
+        }
+        if(!modelUrl){
+            modelUrl='';
+        }
+        if(!modelType){
+            modelType='';
+        }
+        let searchUrl=modelUrl.toLowerCase()
+        let searchType=modelType.toLowerCase();
+
+        if(searchType=='fbx'
+            || searchUrl.indexOf('.fbx')>=0){
+            loader = new FBXLoader();
+        }else if(searchType=='glb'
+            || searchType=='gltf'
+            ||searchUrl.indexOf(".glb")>=0
+        ||searchUrl.indexOf('gltf')){
+            loader=new GLTFLoader();
+            extractor=function(resp){
+                return resp.scene;
+            }
+        }
+        return {
+            loader: loader,
+            extractor: extractor
+        };
+    }
+
+    // 加载 PBR 模型
+    function loadModel(modelUrl,modelType) {
+        let loader = matchModelLoader(modelUrl,modelType);
+
+        loader.loader.load(modelUrl, function (resp) {
+            let model = loader.extractor(resp);
+            // 自动缩放并居中模型
+            const box = new THREE.Box3().setFromObject(model);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const scale = 3 / maxDim;
+            model.scale.setScalar(scale);
+            model.position.sub(center.multiplyScalar(scale));
+
+            scene.add(model);
+            document.getElementById('info').innerText = '模型加载成功！鼠标左键旋转，右键平移，滚轮缩放。';
+        }, undefined, function (error) {
+            console.error('模型加载出错:', error);
+            document.getElementById('info').innerText = '模型加载失败，请检查控制台(CORS跨域或路径错误)。';
+        });
+    }
+
+    // 响应窗口大小变化
+    window.addEventListener('resize', function () {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // 渲染循环
+    function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+    }
+    animate();
+
+    let currentUrl=new URL(window.location.href)
+
+    let hdrUrl=currentUrl.searchParams.get('hdrUrl') || 'puresky_1k.hdr'
+    if(hdrUrl.indexOf('/')<0){
+        hdrUrl='../lib/three@0.164.0/hdr/polyhaven.com/'+hdrUrl;
+    }
+    loadEnvironment(hdrUrl)
+
+    let modelUrl=currentUrl.searchParams.get('modelUrl') || './test.glb'
+    let modelType=currentUrl.searchParams.get('modelType')
+    loadModel(modelUrl,modelType);
+</script>
+</body>
+</html>

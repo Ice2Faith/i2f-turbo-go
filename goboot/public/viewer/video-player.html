@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+	<!-- 移动端适配核心：控制视口宽度和缩放比例 -->
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>video-player</title>
+    <script src="../lib/vue/vue-2.js"></script>
+
+    <!-- CSS -->
+    <link href="../lib/video.js/8.22.0/video-js.min.css" rel="stylesheet">
+    <!-- JS -->
+    <script src="../lib/video.js/8.22.0/video.min.js"></script>
+    <script src="../lib/videojs-hotkeys/latest/videojs.hotkeys.min.js"></script>
+
+    <!-- flv.js -->
+    <script src="../lib/flv.js@1.6.2/dist/flv.min.js"></script>
+</head>
+<body>
+<div id="app">
+    <div :style="'width:'+width+';height:'+height+';'">
+        <template v-if="videoJsSupport">
+            <video ref="videoJs"
+                   class="video-js vjs-default-skin fillWidth vjs-big-play-centered"
+                   autoplay
+                   preload="auto"
+                   controls
+                   :style="'width:'+width+';height:'+height+';'"
+                   data-setup='{}'>
+                <source :src="url" :type="videoJsType">
+            </video>
+        </template>
+        <template v-else-if="flvJsSupport">
+            <video
+                    ref="flvJs"
+                    autoplay
+                    preload="auto"
+                    controls
+                    :style="'width:'+width+';height:'+height+';'"
+            >
+                <source :src="url" :type="flvJsType">
+            </video>
+        </template>
+        <template v-else>
+            <div
+                    style="text-align: center;color: orangered;font-size: 16px;position: relative; top:50%;left:50%;transform: translate(-50%,-50%);">
+                播放器不支持此格式<br/>
+                {{type}}
+            </div>
+        </template>
+    </div>
+
+</div>
+</body>
+<script>
+    window.app = new Vue({
+        el: '#app',
+        name: "VideoPlayer",
+        data() {
+            return {
+                url: '',
+                type: 'MP4', // HLS,RTSP,RTMP,FLV,MP4
+                width: '100%',
+                height: '100vh',
+                richControls: 1,
+                videoJsPlayer: null,
+                flvJsPlayer: null,
+                formatSampleUrl: {
+                    "RTMP": "https://open.ys7.com/v3/openlive/F59607967_13_1.m3u8",
+                }
+            }
+        },
+        watch: {},
+        computed: {
+            videoJsSupport() {
+                return ['HLS', 'RTSP', 'RTMP', 'MP4'].includes(this.type)
+            },
+            videoJsType() {
+                let map = {
+                    'HLS': 'application/x-mpegURL',
+                    'RTSP': 'application/x-mpegURL',
+                    'RTMP': 'application/x-mpegURL',
+                    'MP4': 'video/mp4'
+                }
+
+                return map[this.type]
+            },
+            flvJsSupport() {
+                return ['FLV'].includes(this.type)
+            },
+            flvJsType() {
+                let map = {
+                    'FLV': 'video/flv'
+                }
+
+                return map[this.type]
+            },
+        },
+        destroyed() {
+            if (this.flvJsPlayer) {
+                this.flvJsPlayer.pause()
+                this.flvJsPlayer.unload()
+                this.flvJsPlayer.detachMediaElement()
+                this.flvJsPlayer.destroy()
+                this.flvJsPlayer = null
+            }
+        },
+        mounted() {
+            this.resolveQueryParameters()
+            this.play()
+        },
+        methods: {
+            resolveQueryParameters() {
+                let searchParams = new URL(window.location.href).searchParams
+                this.url = searchParams.get('url');
+                this.type = searchParams.get('type') || this.type || 'MP4';
+                this.width = searchParams.get('width') || this.width || '100%';
+                this.height = searchParams.get('height') || this.height || '100vh';
+                this.richControls = searchParams.get('richControls') || this.richControls || '1';
+            },
+            play() {
+                if (this.videoJsSupport) {
+                    setTimeout(() => {
+                        this.videoJsPlay()
+                    }, 500)
+                } else if (this.flvJsSupport) {
+                    setTimeout(() => {
+                        this.flvJsPlay()
+                    }, 500)
+                }
+            },
+            videoJsPlay() {
+                let dom = this.$refs.videoJs
+                this.videoJsPlayer = videojs(dom, {
+                    //确定播放器是否具有用户可以与之交互的控件。没有控件，启动视频播放的唯一方法是使用autoplay属性或通过Player API。
+                    controls: true,
+                    //自动播放属性,muted:静音播放
+                    autoplay: true,
+                    //建议浏览器是否应在<video>加载元素后立即开始下载视频数据。
+                    preload: "auto",
+                    //设置视频播放器的显示宽度（以像素为单位）
+                    // width: "800px",
+                    //设置视频播放器的显示高度（以像素为单位）
+                    // height: "400px",
+                    controlBar: {
+                        playToggle: true,
+                    }
+                });
+                if (this.richControls == 1) {
+                    this.videoJsPlayer.ready(function () {
+                        const player = this;
+
+                        player.hotkeys({
+                            volumeStep: 0.1,  // 音量步进
+                            seekStep: 5,      // 左右键前进/后退的秒数
+                            enableMute: true, // 启用 M 键静音
+                            enableFullscreen: true, // 启用 F 键全屏
+                            enableNumbers: true     // 启用数字键跳转
+                        });
+
+                        videoJsPlayerMouseMoveProgressChangePlugin(player)
+                    });
+                }
+            },
+            flvJsPlay() {
+                let dom = this.$refs.flvJs
+                this.flvJsPlayer = flvjs.createPlayer(
+                    {
+                        type: "flv",
+                        isLive: true,
+                        hasAudio: false,
+                        url: this.url
+                    },
+                    {
+                        enableWorker: false, //不启用分离线程
+                        enableStashBuffer: false, //关闭IO隐藏缓冲区
+                        reuseRedirectedURL: true, //重用301/302重定向url，用于随后的请求，如查找、重新连接等。
+                        autoCleanupSourceBuffer: true //自动清除缓存
+                    }
+                )
+
+                this.flvJsPlayer.attachMediaElement(dom)
+                this.flvJsPlayer.load()
+                this.flvJsPlayer.play()
+            }
+        }
+    })
+
+    function videoJsPlayerMouseMoveProgressChangePlugin(player) {
+        const playerEl = player.el();
+        window.player = player;
+        // 动态创建提示框
+        const seekHint = document.createElement('div');
+        seekHint.className = 'vjs-seek-hint';
+        playerEl.appendChild(seekHint);
+
+        let startX = 0;
+        let isSeeking = false;
+        let hasSeeked = false;
+        let initialPausedState = false; // 【核心】记录按下瞬间的播放状态
+        let hintTimer = null;
+
+        // 核心处理逻辑
+        const handleSeek = (currentX) => {
+            if (!isSeeking) return;
+            const deltaX = currentX - startX;
+            const seekStep = 5;
+            const threshold = 100;
+
+            if (Math.abs(deltaX) > threshold) {
+                hasSeeked = true;
+                const seekSeconds = Math.floor(Math.abs(deltaX) / threshold) * seekStep;
+                const currentTime = player.currentTime();
+                const duration = player.duration();
+
+                let newTime = currentTime;
+                if (deltaX > 0) {
+                    newTime = Math.min(currentTime + seekSeconds, duration);
+                    seekHint.textContent = `快进 ${seekSeconds} 秒`;
+                } else {
+                    newTime = Math.max(currentTime - seekSeconds, 0);
+                    seekHint.textContent = `快退 ${seekSeconds} 秒`;
+                }
+
+                player.currentTime(newTime);
+                seekHint.classList.add('show');
+                startX = currentX;
+            }
+        };
+
+        const endSeek = (e, trigger) => {
+            if (!isSeeking) return;
+            isSeeking = false;
+            playerEl.style.userSelect = '';
+
+            // 【核心修复】如果发生了拖动，强制还原到按下时的状态
+            if (hasSeeked) {
+                // 如果初始状态是暂停，但中途被点击触发了播放，就强制暂停
+                setTimeout(() => {
+                    if (initialPausedState && !player.paused()) {
+                        player.pause();
+                    }
+                    // 如果初始状态是播放，但中途被点击触发了暂停，就强制播放
+                    else if (!initialPausedState && player.paused()) {
+                        player.play();
+                    }
+                }, 300)
+
+            } else {
+                setTimeout(() => {
+                    if (trigger == 'touch') {
+                        if (player.paused()) {
+                            player.play();
+                        } else {
+                            player.pause();
+                        }
+                    }
+                }, 300)
+            }
+
+            hasSeeked = false;
+
+            clearTimeout(hintTimer);
+            hintTimer = setTimeout(() => {
+                seekHint.classList.remove('show');
+            }, 1000);
+        };
+
+        // ========== 1. 触摸事件 (移动端) ==========
+        playerEl.addEventListener('touchstart', (e) => {
+            startX = e.touches[0].clientX;
+            isSeeking = true;
+            hasSeeked = false;
+            initialPausedState = player.paused(); // 【核心】记录按下瞬间的状态
+        }, {passive: true});
+
+        playerEl.addEventListener('touchmove', (e) => {
+            handleSeek(e.touches[0].clientX);
+            e.preventDefault()
+        }, {passive: false});
+
+        playerEl.addEventListener('touchend', (e) => {
+            endSeek(e, 'touch');
+        });
+
+        // ========== 2. 鼠标事件 (桌面端) ==========
+        playerEl.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            startX = e.clientX;
+            isSeeking = true;
+            hasSeeked = false;
+            initialPausedState = player.paused(); // 【核心】记录按下瞬间的状态
+            //playerEl.style.userSelect = 'none';
+        }, {passive: true});
+
+        document.addEventListener('mousemove', (e) => {
+            handleSeek(e.clientX);
+            e.preventDefault()
+        }, {passive: false});
+
+        document.addEventListener('mouseup', (e) => {
+            endSeek(e, 'mouse');
+        });
+    }
+</script>
+<style>
+    * {
+        padding: 0;
+        margin: 0;
+        box-sizing: content-box;
+    }
+    /* 滑动/拖动提示框样式 */
+    .vjs-seek-hint {
+        position: absolute;
+        bottom: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(0, 0, 0, 0.7);
+        color: #fff;
+        padding: 8px 16px;
+        border-radius: 4px;
+        font-size: 16px;
+        z-index: 100;
+        opacity: 0;
+        transition: opacity 0.3s;
+        pointer-events: none;
+        user-select: none;
+    }
+
+    .vjs-seek-hint.show {
+        opacity: 0.8;
+    }
+</style>
+</html>

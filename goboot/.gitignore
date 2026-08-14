@@ -3,3 +3,4 @@ dist
 output
 !*.zip
 goboot-dev.yml
+!public
