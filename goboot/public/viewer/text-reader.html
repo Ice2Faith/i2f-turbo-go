@@ -113,7 +113,7 @@
             <div ref="refJsonEditor" class="JsonEditor"></div>
         </div>
         <div v-show="mode=='normal'">
-            <div @contextmenu.prevent="onEditorContextmenu(editor,['sql','json-editor'])">
+            <div @contextmenu="onEditorContextEntry">
                 <textarea ref="refEditor"></textarea>
             </div>
         </div>
@@ -194,6 +194,12 @@
                     if(val){
                         this.getTextContentFromUrl();
                     }
+                }
+            },
+            mode:{
+                immidate: true,
+                handler:function(val,old){
+                    this.onModeChange();
                 }
             }
         },
@@ -443,13 +449,27 @@
             },
             onModeChange() {
                 if (this.mode == 'normal') {
-                    this.initEditor();
+                    setTimeout(()=>{
+                        this.initEditor();
+                    },300)
                 }
                 if (this.mode == 'json') {
-                    this.initJsonEditor();
+                    setTimeout(()=>{
+                        this.initJsonEditor();
+                    },300)
                 }
             },
-            onEditorContextmenu(editor, categoryList) {
+            onEditorContextEntry(){
+                let evt = event;
+                this.onEditorContextmenu(this.editor,['sql','json-editor'],evt)
+            },
+            onEditorContextmenu(editor, categoryList,event) {
+                let evt = event;
+                if (window.disabledUserCustomContextMenus) {
+                    return;
+                }
+                evt.preventDefault();
+
                 let _this = this
                 let convertText = function (convertor) {
                     try {
@@ -469,6 +489,16 @@
 
                 let presetMenusMap = {
                     text: [
+                        {
+                            label: `default menu(8s)`,
+                            icon: 'el-icon-guide',
+                            onClick: () => {
+                                window.disabledUserCustomContextMenus = true;
+                                setTimeout(() => {
+                                    window.disabledUserCustomContextMenus = false;
+                                }, 8000)
+                            }
+                        },
                         {label: '', divided: true}, // 分割线
                         {
                             label: `upper`,
@@ -746,11 +776,7 @@
                             label: `Json Editor`,
                             icon: 'el-icon-magic-stick',
                             onClick: () => {
-                                let text = editor.getValue();
-                                this.showJsonEditor(text, (res) => {
-                                    editor.setValue(res);
-                                });
-
+                                this.mode='json';
                             }
                         },
                     ]
@@ -853,6 +879,24 @@
 
     .main-editor .main-editor-header .el-form-item {
         margin-bottom: 0;
+    }
+
+    @media (min-width: 320px) and (max-width: 719px) {
+        .main-editor .main-editor-header {
+            zoom: 0.5;
+        }
+        .main-editor .CodeMirror{
+            font-size: 10px;
+        }
+    }
+
+    @media (max-width: 320px) {
+        .main-editor .main-editor-header {
+            zoom: 0.3;
+        }
+        .main-editor .CodeMirror{
+            font-size: 6px;
+        }
     }
 </style>
 </html>
