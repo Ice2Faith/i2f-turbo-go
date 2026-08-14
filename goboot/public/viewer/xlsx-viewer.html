@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- 移动端适配核心：控制视口宽度和缩放比例 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>xlsx-viewer</title>
+    <script src="../lib/vue/vue-2.js"></script>
+
+    <script src="../lib/moment/moment-2.24.0.js"></script>
+    <script src="../lib/element-ui/element-ui-2.15.10.js"></script>
+    <link rel="stylesheet" href="../lib/element-ui/element-ui-2.15.10.css"/>
+    <link rel="stylesheet" href="../lib/element-ui/element-ui-2.15.10-icon.css"/>
+
+    <script src="../lib/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+
+</head>
+<body>
+<div id="app">
+    <el-tabs v-if="sheetNames && sheetNames.length>0"
+             v-model="activeSheet"
+             class="xlsx-viewer-head">
+        <el-tab-pane v-for="(item,index) in sheetNames"
+                     :label="item"
+                     :name="item"></el-tab-pane>
+    </el-tabs>
+    <div id="excel-container"
+         class="xlsx-viewer-body"
+         :style="'width: '+width+';height: calc('+height+' - 64px); overflow-y: auto; '">
+        <!-- 表格将被渲染到这里 -->
+    </div>
+</div>
+</body>
+<script>
+
+    window.app = new Vue({
+        name: "XlsxViewer",
+        data() {
+            return {
+                url: '',
+                // ///////////////////
+                workbookUrl: '',
+                workbook: null,
+                sheetNames: [],
+                activeSheet: '',
+                width: '100%',
+                height: '100vh',
+            }
+        },
+        watch: {
+            url:{
+                immidate: true,
+                handler:function(val,old){
+                    if(val){
+                        this.renderXlsx();
+                    }
+                }
+            },
+            activeSheet:{
+                immidate: true,
+                handler:function(val,old){
+                    if(val){
+                        this.renderXlsx();
+                    }
+                }
+            }
+        },
+        computed: {},
+        mounted() {
+            this.resolveQueryParameters();
+        },
+        methods: {
+            resolveQueryParameters() {
+                let searchParams = new URL(window.location.href).searchParams
+                this.url = searchParams.get('url');
+                this.width = searchParams.get('width') || this.width || '100%';
+                this.height = searchParams.get('height') || this.height || '100vh';
+            },
+            messageError(msg, limit) {
+                window._lastError = msg;
+                if (limit && limit >= 0) {
+                    if (msg && msg.length > limit) {
+                        msg = msg.substring(0, limit) + '...'
+                    }
+                }
+                this.$message.error(msg)
+            },
+            async renderXlsx(){
+                this.previewXlsxFromUrl(this.url,'excel-container')
+            },
+            async previewXlsxFromUrl(url, containerId) {
+                const container = document.getElementById(containerId);
+                if (!container){
+                    return;
+                }
+
+                try {
+
+
+                    if(!this.workbook || url!=this.workbookUrl) {
+                        // 2. 使用 fetch 获取远程 Excel 文件
+                        const response = await fetch(url);
+                        if (!response.ok) {
+                            throw new Error(`文件请求失败: HTTP ${response.status}`);
+                        }
+                        const arrayBuffer = await response.arrayBuffer();
+
+                        // 3. 使用 SheetJS 解析数据
+                        this.workbook = XLSX.read(arrayBuffer, {type: 'array'});
+                        this.workbookUrl = url;
+
+                        this.sheetNames = [...this.workbook.SheetNames]
+                        // 获取第一个工作表的名称
+                        this.activeSheet = this.workbook.SheetNames[0];
+                    }
+
+                    const worksheet = this.workbook.Sheets[this.activeSheet];
+                    // 将工作表数据转换为 HTML 表格字符串
+                    // header: 1 表示将第一行也作为普通数据处理，不特殊对待
+                    const htmlString = XLSX.utils.sheet_to_html(worksheet/*, { header: this.activeSheet }*/);
+
+                    // 4. 将生成的 HTML 插入到容器中
+                    container.innerHTML = htmlString;
+
+                    setTimeout(()=>{
+                        this.addRowNumberColumnLabels()
+                    },300)
+                } catch (error) {
+                    console.error('Excel 文档预览失败:', error);
+                    container.innerHTML = '<p style="color: red;">文档加载失败，请稍后重试。</p>';
+                }
+            },
+            addRowNumberColumnLabels(){
+                // 2. 手动添加列编号 (A, B, C...)
+                const tbody = document.querySelector('#excel-container table tbody');
+                if(tbody.processed){
+                    return
+                }
+                tbody.processed=true;
+                let rows = tbody.querySelectorAll('tr');
+
+                // 顶部的A,B,C...列名
+                let firstRow=rows[0];
+                let headRow=document.createElement('tr');
+                for(let i=0;i<firstRow.children.length;i++){
+                    let headCell=document.createElement('th');
+                    headCell.textContent = XLSX.utils.encode_col(i);
+                    headRow.appendChild(headCell);
+                }
+                tbody.insertBefore(headRow, firstRow);
+
+                // 左侧的1,2,3...行号
+                rows = tbody.querySelectorAll('tr');
+                for (let i = 0; i < rows.length; i++) {
+                    let row=rows[i];
+                    let firstCell=row.children[0]
+
+                    let headCell=document.createElement(i==0?'th':'td');
+                    headCell.textContent = ''+i;
+                    row.insertBefore(headCell,firstCell)
+                }
+            }
+        }
+    })
+
+    window.app.$mount('#app');
+</script>
+<style>
+    * {
+        padding: 0;
+        margin: 0;
+        box-sizing: content-box;
+    }
+
+    /* 简单的表格样式 */
+    .xlsx-viewer-body table {
+        border-collapse: collapse;
+        width: 100%;
+    }
+    .xlsx-viewer-body th, .xlsx-viewer-body td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
+    }
+    .xlsx-viewer-body th {
+        background-color: #f2f2f2;
+        font-weight: bold;
+    }
+    .xlsx-viewer-body tr:nth-child(even){
+        background-color: #f9f9f9;
+    }
+
+    @media (min-width: 320px) and (max-width: 719px) {
+        .xlsx-viewer-body,.xlsx-viewer-head {
+            zoom: 0.5;
+        }
+    }
+
+    @media (max-width: 320px) {
+        .xlsx-viewer-body.xlsx-viewer-head {
+            zoom: 0.3;
+        }
+    }
+
+</style>
+</html>

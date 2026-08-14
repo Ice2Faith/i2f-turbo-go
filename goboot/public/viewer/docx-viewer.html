@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- 移动端适配核心：控制视口宽度和缩放比例 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>docx-viewer</title>
+    <script src="../lib/vue/vue-2.js"></script>
+
+    <script src="../lib/jszip/dist/jszip.min.js"></script>
+    <script src="../lib/docx-preview/dist/docx-preview.js"></script>
+</head>
+<body>
+<div id="app">
+    <div id="docx" :style="'width: '+width+';height: '+height+'; overflow-y: auto; '"></div>
+</div>
+</body>
+<script>
+
+    window.app = new Vue({
+        name: "DocxViewer",
+        data() {
+            return {
+                url: '',
+                width: '100%',
+                height: '100vh',
+            }
+        },
+        watch: {
+            url:{
+                immidate: true,
+                handler:function(val,old){
+                    if(val){
+                        this.renderDocx();
+                    }
+                }
+            },
+        },
+        computed: {},
+        mounted() {
+            this.resolveQueryParameters();
+        },
+        methods: {
+            resolveQueryParameters() {
+                let searchParams = new URL(window.location.href).searchParams
+                this.url = searchParams.get('url');
+                this.width = searchParams.get('width') || this.width || '100%';
+                this.height = searchParams.get('height') || this.height || '100vh';
+            },
+            messageError(msg, limit) {
+                window._lastError = msg;
+                if (limit && limit >= 0) {
+                    if (msg && msg.length > limit) {
+                        msg = msg.substring(0, limit) + '...'
+                    }
+                }
+                this.$message.error(msg)
+            },
+            async renderDocx(){
+                this.previewDocxFromUrl(this.url,'docx')
+            },
+            async previewDocxFromUrl(url, containerId) {
+                const container = document.getElementById(containerId);
+                if (!container) {
+                    return;
+                }
+
+                try {
+                    // 1. 使用 fetch 获取远程 URL 的文件流
+                    const response = await fetch(url);
+                    if (!response.ok) {
+                        throw new Error(`文件请求失败: HTTP ${response.status}`);
+                    }
+
+                    // 2. 将响应转换为 Blob 或 ArrayBuffer
+                    // 方式一：转换为 Blob
+                    const blob = await response.blob();
+
+                    // 方式二：转换为 ArrayBuffer（同样被 docx-preview 支持）
+                    // const arrayBuffer = await response.arrayBuffer();
+
+                    // 3. 调用 renderAsync 渲染文档
+                    await docx.renderAsync(blob, container, null, {
+                        // className: 'docx', // 可选：自定义样式类名
+                        inWrapper: true,           // 可选：是否包裹在默认容器中
+                        ignoreWidth: false,        // 可选：是否忽略文档宽度
+                        ignoreHeight: false,       // 不忽略文档高度
+                        breakPages: true,          // 可选：是否分页显示
+                        renderHeaders: true,
+                        renderFooters: true,
+                        renderFootnotes: true
+                    });
+                } catch (error) {
+                    console.error('Word 文档预览失败:', error);
+                    container.innerHTML = '<p style="color: red;">文档加载失败，请稍后重试。</p>';
+                }
+            }
+        }
+    })
+
+    window.app.$mount('#app');
+</script>
+<style>
+    * {
+        padding: 0;
+        margin: 0;
+        box-sizing: content-box;
+    }
+
+    #docx .docx-wrapper{
+
+    }
+
+    @media (min-width: 320px) and (max-width: 719px) {
+        #docx .docx-wrapper {
+            zoom: 0.5;
+        }
+    }
+
+    @media (max-width: 320px) {
+        #docx .docx-wrapper {
+            zoom: 0.3;
+        }
+    }
+
+</style>
+</html>
