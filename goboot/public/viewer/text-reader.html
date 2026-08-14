@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- 移动端适配核心：控制视口宽度和缩放比例 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>text-reader</title>
+    <script src="../lib/vue/vue-2.js"></script>
+
+    <script src="../lib/moment/moment-2.24.0.js"></script>
+    <script src="../lib/element-ui/element-ui-2.15.10.js"></script>
+    <link rel="stylesheet" href="../lib/element-ui/element-ui-2.15.10.css"/>
+    <link rel="stylesheet" href="../lib/element-ui/element-ui-2.15.10-icon.css"/>
+
+    <script src="../lib/axios/axios-1.1.3.min.js"></script>
+    <script src="../lib/axios/qs.js"></script>
+
+    <script src="../lib/vue-contextmenujs-1.4.11/contextmenu.umd.js"></script>
+
+    <!-- 从这里查找 CDN 资源： https://cdnjs.com/libraries/codemirror -->
+    <script src="../lib/codemirror-6.65.7/codemirror.min.js"></script>
+    <link rel="stylesheet" href="../lib/codemirror-6.65.7/codemirror.min.css"/>
+    <link rel="stylesheet" href="../lib/codemirror-6.65.7/addon/hint/show-hint.min.css"/>
+    <script src="../lib/codemirror-6.65.7/addon/hint/show-hint.min.js"></script>
+    <link rel="stylesheet" href="../lib/codemirror-6.65.7/theme/idea.min.css"/>
+
+    <script src="../lib/codemirror-6.65.7/addon/search/search.min.js"></script>
+    <script src="../lib/codemirror-6.65.7/addon/search/searchcursor.min.js"></script>
+    <script src="../lib/codemirror-6.65.7/addon/search/jump-to-line.min.js"></script>
+    <script src="../lib/codemirror-6.65.7/addon/search/match-highlighter.min.js"></script>
+
+    <script src="../lib/codemirror-6.65.7/mode/groovy/groovy.min.js"></script>
+
+
+    <script src="../lib/codemirror-6.65.7/mode/yaml/yaml.min.js"></script>
+    <script src="../lib/codemirror-6.65.7/addon/lint/yaml/yaml-lint.min.js"></script>
+
+    <script src="../lib/codemirror-6.65.7/mode/javascript/javascript.min.js"></script>
+    <script src="../lib/codemirror-6.65.7/addon/hint/javascript/javascript-hint.min.js"></script>
+    <script src="../lib/codemirror-6.65.7/addon/lint/javascript/javascript-lint.min.js"></script>
+
+    <script src="../lib/codemirror-6.65.7/mode/sql/sql.min.js"></script>
+    <script src="../lib/codemirror-6.65.7/addon/hint/sql/sql-hint.min.js"></script>
+
+    <script src="../lib/codemirror-6.65.7/mode/shell/shell.min.js"></script>
+
+    <script src="../lib/codemirror-6.65.7/mode/xml/xml.min.js"></script>
+    <script src="../lib/codemirror-6.65.7/addon/fold/xml/xml-fold.min.js"></script>
+    <script src="../lib/codemirror-6.65.7/addon/hint/xml/xml-hint.min.js"></script>
+
+    <script src="../lib/codemirror-6.65.7/addon/lint/html/html-lint.min.js"></script>
+    <script src="../lib/codemirror-6.65.7/addon/hint/html/html-hint.min.js"></script>
+    <script src="../lib/codemirror-6.65.7/mode/htmlmixed/htmlmixed.min.js"></script>
+
+    <script src="../lib/codemirror-6.65.7/mode/markdown/markdown.min.js"></script>
+    <script src="../lib/codemirror-6.65.7/addon/fold/markdown/markdown-fold.min.js"></script>
+
+    <script src="../lib/codemirror-6.65.7/mode/groovy/groovy.min.js"></script>
+
+    <script src="../lib/codemirror-6.65.7/mode/nginx/nginx.min.js"></script>
+
+    <script src="../lib/codemirror-6.65.7/mode/python/python.min.js"></script>
+
+    <script src="../lib/codemirror-6.65.7/mode/css/css.min.js"></script>
+
+    <script src="../lib/codemirror-6.65.7/mode/go/go.min.js"></script>
+
+    <script src="../lib/codemirror-6.65.7/mode/lua/lua.min.js"></script>
+
+    <script src="../lib/codemirror-6.65.7/mode/perl/perl.min.js"></script>
+
+    <script src="../lib/codemirror-6.65.7/mode/php/php.min.js"></script>
+
+    <script src="../lib/codemirror-6.65.7/mode/properties/properties.min.js"></script>
+
+    <script src="../lib/codemirror-6.65.7/mode/vue/vue.min.js"></script>
+
+    <script src="../lib/sql-formatter/15.6.9/sql-formatter.min.js"></script>
+
+    <link rel="stylesheet" href="../lib/jsoneditor/10.4.1/jsoneditor.min.css"/>
+    <script src="../lib/jsoneditor/10.4.1/jsoneditor.min.js"></script>
+</head>
+<body>
+<div id="app">
+    <div class="main-editor">
+        <div v-if="controls==1" class="main-editor-header">
+            <el-form inline label-position="left" label-width="80px">
+                <el-form-item label="编辑器">
+                    <el-select clearable filterable v-model="mode" placeholder="编辑器类型"
+                               @change="onModeChange">
+                        <el-option
+                                v-for="item in modeList"
+                                :key="item.value"
+                                :label="item.label"
+                                :value="item.value">
+                        </el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item v-if="mode=='normal'" label="语言类型">
+                    <el-select clearable filterable v-model="lang" placeholder="语言类型"
+                               @change="onLangChange">
+                        <el-option
+                                v-for="item in langList"
+                                :key="item.value"
+                                :label="item.label"
+                                :value="item.value">
+                        </el-option>
+                    </el-select>
+                </el-form-item>
+            </el-form>
+        </div>
+        <div v-show="mode=='json'">
+            <div ref="refJsonEditor" class="JsonEditor"></div>
+        </div>
+        <div v-show="mode=='normal'">
+            <div @contextmenu.prevent="onEditorContextmenu(editor,['sql','json-editor'])">
+                <textarea ref="refEditor"></textarea>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+<script>
+    window.app = new Vue({
+        name: "TextReader",
+        data() {
+            return {
+                url: '',
+                controls: '1',
+                // /////////////////////////////////////
+                editor: null,
+                jsonEditor: null,
+                completions: [],
+                mode: 'normal', // normal,json
+                lang: 'text',
+                content: '',
+                langList: [
+                    {label: 'Text', value: 'text'},
+                    {label: 'Yaml', value: 'yaml'},
+                    {label: 'Json', value: 'json'},
+                    {label: 'JavaScript', value: 'javascript'},
+                    {label: 'SQL', value: 'sql'},
+                    {label: 'Shell', value: 'shell'},
+                    {label: 'Xml', value: 'xml'},
+                    {label: 'Html', value: 'htmlmixed'},
+                    {label: 'Css', value: 'css'},
+                    {label: 'Markdown', value: 'markdown'},
+                    {label: 'Groovy', value: 'groovy'},
+                    {label: 'Nginx', value: 'nginx'},
+                    {label: 'Python', value: 'python'},
+                    {label: 'Golang', value: 'go'},
+                    {label: 'Lua', value: 'lua'},
+                    {label: 'Perl', value: 'perl'},
+                    {label: 'Php', value: 'php'},
+                    {label: 'Properties', value: 'properties'},
+                    {label: 'Vue', value: 'vue'},
+
+                ],
+                langAliasMap: {
+                    'txt': 'text',
+                    'yml': 'yaml',
+                    'json': 'javascript',
+                    'js': 'javascript',
+                    'ts': 'javascript',
+                    'typescript': 'javascript',
+                    'bash': 'shell',
+                    'sh': 'shell',
+                    'bat': 'shell',
+                    'cmd': 'shell',
+                    'vbs': 'shell',
+                    'html': 'htmlmixed',
+                    'htm': 'htmlmixed',
+                    'htmx': 'htmlmixed',
+                    'svg': 'htmlmixed',
+                    'vue': 'vue',
+                    'sass': 'css',
+                    'less': 'css',
+                    'md': 'markdown',
+                    'conf': 'nginx',
+                    'py': 'python',
+                    'golang': 'go',
+                    'pl': 'perl',
+                },
+                modeList: [
+                    {label: '通用编辑器', value: 'normal'},
+                    {label: 'JSON编辑器', value: 'json'},
+                ]
+            }
+        },
+        watch: {
+            url:{
+                immidate: true,
+                handler:function(val,old){
+                    if(val){
+                        this.getTextContentFromUrl();
+                    }
+                }
+            }
+        },
+        computed: {},
+        mounted() {
+            this.resolveQueryParameters();
+            this.initEditor();
+            this.initCompletionsRefreshInterval();
+        },
+        methods: {
+            resolveQueryParameters() {
+                let searchParams = new URL(window.location.href).searchParams
+                this.url = searchParams.get('url');
+                this.mode = searchParams.get('mode') || this.mode || 'normal';
+                this.lang = searchParams.get('lang') || this.lang || 'text';
+                this.controls = searchParams.get('controls') || this.controls || '1';
+            },
+            messageError(msg, limit) {
+                window._lastError = msg;
+                if (limit && limit >= 0) {
+                    if (msg && msg.length > limit) {
+                        msg = msg.substring(0, limit) + '...'
+                    }
+                }
+                this.$message.error(msg)
+            },
+            downloadFile(fileUrl) {
+                return this.$axios({
+                    url: fileUrl,
+                    method: 'get',
+                    responseType: 'blob'
+                }).then(res => {
+                    let contentDisposition = ''
+                    let contentType = ''
+
+                    Object.keys(res.headers).forEach(k => {
+                        if ('content-disposition' == k.toLowerCase()) {
+                            contentDisposition = res.headers[k]
+                        }
+                        if ('content-type' == k.toLowerCase()) {
+                            contentType = res.headers[k]
+                        }
+                    })
+
+                    let fileName = 'download.data'
+                    if (contentDisposition && contentDisposition != '') {
+                        let arr = contentDisposition.split(';');
+                        arr.forEach(item => {
+                            item = item.trim();
+                            let pair = item.split("=", 2);
+                            let key = pair[0].trim();
+                            if ('filename' == key.toLowerCase()) {
+                                if (pair.length == 2) {
+                                    let val = decodeURIComponent(pair[1].trim());
+                                    fileName = val;
+                                }
+                            }
+                        })
+                    }
+
+                    if (!contentType || contentType == '') {
+                        contentType = 'application/octet-stream'
+                    }
+
+
+                    return {
+                        fileName: fileName,
+                        data: res.data,
+                        contentType: contentType
+                    }
+                })
+            },
+            blobToStringWithFileReader(blob) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    // 以文本形式读取 Blob
+                    reader.readAsText(blob, 'utf-8');
+
+                    reader.onload = function() {
+                        resolve(reader.result); // 读取完成后，结果在 result 属性中
+                    };
+
+                    reader.onerror = function() {
+                        reject(reader.error);
+                    };
+                });
+            },
+            getTextContentFromUrl(){
+                this.downloadFile(this.url).then(res => {
+                    const blob = new Blob([res.data], {type: res.contentType})
+                    return this.blobToStringWithFileReader(blob)
+                }).then(text=>{
+                    this.content=text;
+                    this.onModeChange();
+                }).catch(err => {
+                    fetch(this.url)
+                        .then(res=>res.text())
+                        .then(text=>{
+                            this.content=text;
+                            this.onModeChange();
+                        }).catch(err => {
+                        this.messageError(err.errorMessage || err.message || '操作失败', 300)
+                    })
+                })
+            },
+            initCompletionsRefreshInterval() {
+                let _this = this;
+
+                function refresh() {
+                    setTimeout(() => {
+                        _this.collectCompletionItems()
+                        refresh();
+                    }, 3000);
+                }
+
+                refresh();
+            },
+            collectCompletionItems() {
+                //console.log('begin collect completions ...')
+                let items = [];
+                let keywords = [
+                    'int','long','boolean','float','double','byte','char','short','void',
+                    'let','var','function','class','interface','extends','implements',
+                    'private','protected','public','static','final',
+                    'main',
+                    'if','for','foreach','while','do','else','switch','case','default',
+                    'continue','break','goto','return',
+                ]
+                if (keywords) {
+                    items.push(...keywords);
+                }
+
+                if(this.content){
+                    let identifiers=[...this.content.matchAll(/\b[a-zA-Z_]+\b/g)].map(e=>e[0])
+                    items.push(...identifiers)
+                }
+
+                let completions = [];
+                items.forEach(item => {
+                    if (!item) {
+                        return;
+                    }
+                    item = item.trim();
+                    if (item == '') {
+                        return;
+                    }
+                    if (!completions.includes(item)) {
+                        completions.push(item);
+                    }
+                })
+                this.completions = items;
+                //console.log('end collect completions .')
+            },
+            editorCompletionItemCollector(prefix) {
+                if (!prefix) {
+                    prefix = '';
+                }
+                prefix = prefix.toLowerCase();
+                let ret = [];
+                let count = 50;
+                for (let i = 0; i < this.completions.length; i++) {
+                    let e = this.completions[i];
+                    if (e && e.toLowerCase().indexOf(prefix) >= 0) {
+                        ret.push(e);
+                        count--;
+                        if (count <= 0) {
+                            break;
+                        }
+                    }
+                }
+                return ret;
+            },
+            initEditor() {
+                if (this.editor) {
+                    try {
+                        this.editor.toTextArea()
+                    } catch (e) {
+
+                    }
+                }
+                this.editor = null;
+
+                let _this = this;
+
+                function asyncHint(editor, callback, options) {
+                    let cur = editor.getCursor();
+                    let token = editor.getTokenAt(cur);
+                    let prefix = token.string;
+
+                    let items = _this.editorCompletionItemCollector(prefix) || []
+                    let result = []
+                    if (result && result.list) {
+                        items = [...items, ...result.list]
+                    }
+                    callback({
+                        list: items,
+                        from: CodeMirror.Pos(cur.line, token.start),
+                        to: CodeMirror.Pos(cur.line, token.end)
+                    });
+                }
+
+                asyncHint.async = true;
+                asyncHint.supportsSelection = true;
+
+                let lang = this.lang || 'text'
+                lang = lang.toLowerCase();
+                if (lang.startsWith('.')) {
+                    lang = lang.substring(1)
+                }
+                if (this.langAliasMap[lang]) {
+                    lang = this.langAliasMap[lang];
+                }
+                recognizeLangList = this.langList.filter(e => e.value == lang) || [];
+                if (recognizeLangList.length == 0) {
+                    lang = 'text'
+                }
+
+                let dom = this.$refs.refEditor;
+                this.editor = CodeMirror.fromTextArea(dom, {  // 标识到textarea
+                    value: "",  // 文本域默认显示的文本
+                    mode: lang,  // 模式
+                    theme: "idea",  // CSS样式选择
+                    indentUnit: 2,  // 缩进单位，默认2
+                    smartIndent: true,  // 是否智能缩进
+                    tabSize: 4,  // Tab缩进，默认4
+                    readOnly: false,  // 是否只读，默认false
+                    showCursorWhenSelecting: true,
+                    hintOptions: {
+                        completeSingle: false,
+                        hint: asyncHint,
+                    },
+                    lineNumbers: true  // 是否显示行号
+                    // .. 还有好多，翻译不完。需要的去看http://codemirror.net/doc/manual.html#config
+                });
+                this.editor.on("keypress", () => {
+                    //编译器内容更改事件
+                    this.editor.showHint();
+                });
+                this.editor.setValue(this.content || '');
+                this.editor.on('change', () => {
+                    this.content = this.editor.getValue();
+                });
+            },
+            onLangChange() {
+                this.initEditor()
+            },
+            onModeChange() {
+                if (this.mode == 'normal') {
+                    this.initEditor();
+                }
+                if (this.mode == 'json') {
+                    this.initJsonEditor();
+                }
+            },
+            onEditorContextmenu(editor, categoryList) {
+                let _this = this
+                let convertText = function (convertor) {
+                    try {
+                        let text = editor.getSelection();
+                        if (!text || text == '') {
+                            text = editor.getValue()
+                            text = convertor(text);
+                            editor.setValue(text)
+                        } else {
+                            text = convertor(text);
+                            editor.replaceSelection(text)
+                        }
+                    } catch (e) {
+                        _this.$message.error('操作失败')
+                    }
+                }
+
+                let presetMenusMap = {
+                    text: [
+                        {label: '', divided: true}, // 分割线
+                        {
+                            label: `upper`,
+                            icon: 'el-icon-magic-stick',
+                            onClick: () => {
+                                convertText(function (s) {
+                                    if (!s) {
+                                        return s;
+                                    }
+                                    return s.toUpperCase();
+                                })
+                            }
+                        },
+                        {
+                            label: `lower`,
+                            icon: 'el-icon-magic-stick',
+                            onClick: () => {
+                                convertText(function (s) {
+                                    if (!s) {
+                                        return s;
+                                    }
+                                    return s.toLowerCase();
+                                })
+                            }
+                        },
+                        {
+                            label: `replace`,
+                            icon: 'el-icon-magic-stick',
+                            onClick: () => {
+                                let searchText = '';
+                                let replaceText = '';
+                                this.$prompt('请输入要查找的字符串', '输入框', {
+                                    confirmButtonText: '确定',
+                                    cancelButtonText: '取消',
+                                }).then(({value}) => {
+                                    searchText = value;
+                                    this.$prompt('请输入要替换为的字符串', '输入框', {
+                                        confirmButtonText: '确定',
+                                        cancelButtonText: '取消',
+                                    }).then(({value}) => {
+                                        replaceText = value;
+                                        convertText(function (s) {
+                                            if (!s) {
+                                                return s;
+                                            }
+                                            return s.replaceAll(searchText, replaceText);
+                                        })
+                                    })
+                                })
+
+
+                            }
+                        },
+                        {
+                            label: `regexp_replace`,
+                            icon: 'el-icon-magic-stick',
+                            onClick: () => {
+                                let searchText = '';
+                                let replaceText = '';
+                                this.$prompt('请输入要查找的正则', '输入框', {
+                                    confirmButtonText: '确定',
+                                    cancelButtonText: '取消',
+                                }).then(({value}) => {
+                                    searchText = value;
+                                    this.$prompt('请输入要替换为的字符串', '输入框', {
+                                        confirmButtonText: '确定',
+                                        cancelButtonText: '取消',
+                                    }).then(({value}) => {
+                                        replaceText = value;
+                                        convertText(function (s) {
+                                            if (!s) {
+                                                return s;
+                                            }
+                                            return s.replaceAll(new RegExp(searchText, 'g'), replaceText);
+                                        })
+                                    })
+                                })
+
+
+                            }
+                        },
+                        {
+                            label: 'encode/decode',
+                            icon: 'el-icon-magic-stick',
+                            children: [
+                                {label: '', divided: true}, // 分割线
+                                {
+                                    label: `encode_base64`,
+                                    icon: 'el-icon-magic-stick',
+                                    onClick: () => {
+                                        convertText(function (s) {
+                                            if (!s) {
+                                                return s;
+                                            }
+                                            return btoa(s);
+                                        })
+                                    }
+                                },
+                                {
+                                    label: `decode_base64`,
+                                    icon: 'el-icon-magic-stick',
+                                    onClick: () => {
+                                        convertText(function (s) {
+                                            if (!s) {
+                                                return s;
+                                            }
+                                            return atob(s);
+                                        })
+                                    }
+                                },
+
+                            ]
+                        },
+                        {
+                            label: 'SQL escape',
+                            icon: 'el-icon-magic-stick',
+                            children: [
+                                {label: '', divided: true}, // 分割线
+                                {
+                                    label: `escape_sql`,
+                                    icon: 'el-icon-magic-stick',
+                                    onClick: () => {
+                                        convertText(function (s) {
+                                            if (!s) {
+                                                return s;
+                                            }
+                                            return "'" + s.replaceAll("'", "''") + "'";
+                                        })
+                                    }
+                                },
+                                {
+                                    label: `unescape_sql`,
+                                    icon: 'el-icon-magic-stick',
+                                    onClick: () => {
+                                        convertText(function (s) {
+                                            if (!s) {
+                                                return s;
+                                            }
+                                            if (s.startsWith("'")) {
+                                                s = s.substring(1);
+                                            }
+                                            if (s.endsWith("'")) {
+                                                s = s.substring(0, s.length - 1);
+                                            }
+                                            return s.replaceAll("''", "'");
+                                        })
+                                    }
+                                },
+                            ]
+                        },
+                        {
+                            label: 'Json Convert',
+                            icon: 'el-icon-magic-stick',
+                            children: [
+                                {label: '', divided: true}, // 分割线
+                                {
+                                    label: `to_json`,
+                                    icon: 'el-icon-magic-stick',
+                                    onClick: () => {
+                                        convertText(function (s) {
+                                            if (!s) {
+                                                return s;
+                                            }
+                                            return JSON.stringify(s);
+                                        })
+                                    }
+                                },
+                                {
+                                    label: `parse_json`,
+                                    icon: 'el-icon-magic-stick',
+                                    onClick: () => {
+                                        convertText(function (s) {
+                                            if (!s) {
+                                                return s;
+                                            }
+                                            let obj = JSON.parse(s);
+                                            if (typeof obj == 'string') {
+                                                return obj + '';
+                                            }
+                                            return JSON.stringify(obj, null, '    ')
+                                        })
+                                    }
+                                },
+                                {
+                                    label: `format_json`,
+                                    icon: 'el-icon-magic-stick',
+                                    onClick: () => {
+                                        convertText(function (s) {
+                                            if (!s) {
+                                                return s;
+                                            }
+                                            let obj = JSON.parse(s);
+                                            return JSON.stringify(obj, null, '    ')
+                                        })
+                                    }
+                                },
+                            ]
+                        },
+
+                    ],
+                    sql: [
+                        {
+                            label: 'SQL segments',
+                            icon: 'el-icon-magic-stick',
+                            children: [
+                                {label: '', divided: true}, // 分割线
+                                {
+                                    label: `count(1)`,
+                                    icon: 'el-icon-magic-stick',
+                                    onClick: () => {
+                                        convertText(function (s) {
+                                            if (!s) {
+                                                return s;
+                                            }
+                                            return 'select count(1) \nfrom ' + s + '\nwhere 1=1 \n';
+                                        })
+                                    }
+                                },
+                                {
+                                    label: `select`,
+                                    icon: 'el-icon-magic-stick',
+                                    onClick: () => {
+                                        convertText(function (s) {
+                                            if (!s) {
+                                                return s;
+                                            }
+                                            return 'select * \nfrom ' + s + '\nwhere 1=1 \n';
+                                        })
+                                    }
+                                },
+                                {
+                                    label: `update`,
+                                    icon: 'el-icon-magic-stick',
+                                    onClick: () => {
+                                        convertText(function (s) {
+                                            if (!s) {
+                                                return s;
+                                            }
+                                            return 'update ' + s + '\n set \n\nwhere  \n';
+                                        })
+                                    }
+                                },
+                                {
+                                    label: `delete`,
+                                    icon: 'el-icon-magic-stick',
+                                    onClick: () => {
+                                        convertText(function (s) {
+                                            if (!s) {
+                                                return s;
+                                            }
+                                            return 'delete from ' + s + '\nwhere  \n';
+                                        })
+                                    }
+                                },
+                            ]
+                        },
+                        {label: '', divided: true}, // 分割线
+                        ...((typeof sqlFormatter != 'object') ? [] : [{
+                            label: `format sql`,
+                            icon: 'el-icon-magic-stick',
+                            onClick: () => {
+                                let _this = this;
+                                convertText(function (s) {
+                                    if (!s) {
+                                        return s;
+                                    }
+                                    return _this.formatSql(s);
+                                })
+                            }
+                        }]),
+                    ],
+                    'json-editor': [
+                        {label: '', divided: true}, // 分割线
+                        {
+                            label: `Json Editor`,
+                            icon: 'el-icon-magic-stick',
+                            onClick: () => {
+                                let text = editor.getValue();
+                                this.showJsonEditor(text, (res) => {
+                                    editor.setValue(res);
+                                });
+
+                            }
+                        },
+                    ]
+                }
+                let menus = [...presetMenusMap.text]
+                categoryList = categoryList || []
+                if (categoryList && categoryList.length > 0) {
+                    for (let i = 0; i < categoryList.length; i++) {
+                        let category = categoryList[i];
+                        if (category == 'text') {
+                            continue;
+                        }
+                        menus.push(...presetMenusMap[category])
+                    }
+                }
+                this.$contextmenu({
+                    items: menus,
+                    event, // 必须传入 event 以确定位置
+                    zIndex: 3000,
+                    minWidth: 180
+                });
+            },
+            formatSql(sql) {
+                if (!sql) {
+                    return sql;
+                }
+
+                // 设置选项
+                const options = {
+                    keywordCase: 'lower',
+                    indent: '\t'
+                };
+
+                // 格式化SQL
+                const formatted = sqlFormatter.format(sql, options);
+                return formatted;
+            },
+            initJsonEditor() {
+
+                let _this = this;
+                setTimeout(() => {
+                    // create the editor
+                    let container = this.$refs.refJsonEditor;
+
+
+                    //  mode: 'tree' (default), 'view', 'form', 'code', 'text', 'preview',
+                    // editor.getTextSelection()
+                    // editor.set(initialJson)
+                    // editor.getText()
+                    // editor.setText(jsonString)
+                    if (!this.jsonEditor || !this.jsonEditor.getText) {
+                        const options = {
+                            mode: 'tree', // default mode
+                            modes: ['tree', 'code', 'form', 'text', 'view', 'preview'], // all support change ode
+                            mainMenuBar: true,
+                            navigationBar: true,
+                            statusBar: true,
+                            onChangeText: function (text) { // content change callback
+                                _this.content = text;
+                            }
+                        }
+                        this.jsonEditor = new JSONEditor(container, options)
+                    }
+
+                    // set json
+                    try {
+                        this.jsonEditor.setText(this.content);
+                    } catch (e) {
+                        this.$message.warning('JSON可能不正确，编辑器可能无法正常工作')
+                    }
+                }, 300)
+            },
+        }
+    })
+    let defaultConfig = {
+        baseURL: './',
+        timeout: 10 * 60 * 1000,
+        responseType: 'json'
+    };
+    let request = axios.create(defaultConfig);
+    window.app.$axios = request;
+    window.app.$mount('#app');
+</script>
+<style>
+    * {
+        padding: 0;
+        margin: 0;
+        box-sizing: content-box;
+    }
+
+    .main-editor .CodeMirror, .JsonEditor {
+        height: calc(100vh - 60px);
+    }
+
+    .main-editor .main-editor-header {
+        padding: 8px 15px;
+        text-align: center;
+        border: solid 1px #ddd;
+    }
+
+    .main-editor .main-editor-header .el-form-item {
+        margin-bottom: 0;
+    }
+</style>
+</html>

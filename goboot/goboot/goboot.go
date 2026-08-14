@@ -1629,6 +1629,30 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 					if(idx>=0){
 						suffix=name.substring(idx).toLowerCase()
 					}
+                    if (['.txt', '.log', '.md',
+                         '.bat', '.sh', '.cmd', '.vbs',
+                         '.css', '.js', '.ts', '.sass', '.less',
+                         '.yml', '.yaml', '.properties', '.conf', '.ini', '.cfg', '.reg',
+                         '.xml', '.json', '.jsonl', '.jsonc',
+                         '.sql',
+                         '.c', '.h', '.cpp', '.hpp', '.hxx',
+                         '.java', '.py', '.go', '.pl', '.groovy', '.scala', '.kts',
+                         '.gitignore', '.gitattributes',
+                         '.vue', '.lua', '.php'
+                    ].includes(suffix)) {
+                        let idx = nextPath.indexOf('/download/')
+                        if (idx >= 0) {
+                            nextPath = nextPath.substring(idx)
+                        }
+                        nextPath = '../..' + nextPath
+                        let readerPath = '/' + pathPublic + '/viewer/text-reader.html'
+                        let readerLang = 'text'
+                        if (suffix) {
+                            readerLang = suffix
+                        }
+                        nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath) + '&lang=' + readerLang
+                    }
+
 					if(['.mp4','.avi','.mkv','.rmvb','.wav','.flv'].includes(suffix)){
 						let idx=nextPath.indexOf('/download/')
 						if(idx>=0){
@@ -1861,15 +1885,15 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 				suffix := strings.ToLower(filepath.Ext(info.Name()))
 				if SliceContains([]string{
 					".txt", ".log", ".md",
-					".bat", ".sh",
-					".css", ".js", ".ts", ".sass", ".less",
-					".yml", ".yaml", ".properties",
-					".xml", ".json", ".jsonl", ".jsonc",
-					".sql",
-					".c", ".h", ".cpp", ".hpp", ".hxx",
-					".java", ".py", ".go", ".pl",
-					".gitignore", ".gitattributes",
-					".vue",
+                    ".bat", ".sh", ".cmd", ".vbs",
+                    ".css", ".js", ".ts", ".sass", ".less",
+                    ".yml", ".yaml", ".properties", ".conf", ".ini", ".cfg", ".reg",
+                    ".xml", ".json", ".jsonl", ".jsonc",
+                    ".sql",
+                    ".c", ".h", ".cpp", ".hpp", ".hxx",
+                    ".java", ".py", ".go", ".pl", ".groovy", ".scala", ".kts",
+                    ".gitignore", ".gitattributes",
+                    ".vue", ".lua", ".php",
 				}, suffix) {
 					c.Header("Content-Type", "text/plain")
 					c.Status(http.StatusOK)
