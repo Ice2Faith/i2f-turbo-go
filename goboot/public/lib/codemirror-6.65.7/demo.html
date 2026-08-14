@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CodeMirror Demo</title>
+
+  <script src="../vue/vue-2.js"></script>
+
+  <script src="../moment/moment-2.24.0.js"></script>
+  <script src="../element-ui/element-ui-2.15.10.js"></script>
+  <link rel="stylesheet" href="../element-ui/element-ui-2.15.10.css"/>
+  <link rel="stylesheet" href="../element-ui/element-ui-2.15.10-icon.css"/>
+  <link href="../element-ui/fonts/element-icons.ttf"/>
+  <link href="../element-ui/fonts/element-icons.woff"/>
+
+  <!-- 从这里查找 CDN 资源： https://cdnjs.com/libraries/codemirror -->
+  <script src="./codemirror.min.js"></script>
+  <link rel="stylesheet" href="./codemirror.min.css"/>
+
+  <link rel="stylesheet" href="./addon/hint/show-hint.min.css"/>
+  <script src="./addon/hint/show-hint.min.js"></script>
+
+  <link rel="stylesheet" href="./theme/idea.min.css"/>
+
+  <script src="./addon/search/search.min.js" ></script>
+  <script src="./addon/search/searchcursor.min.js" ></script>
+  <script src="./addon/search/jump-to-line.min.js" ></script>
+  <script src="./addon/search/match-highlighter.min.js" ></script>
+
+  <script src="./mode/sql/sql.min.js"></script>
+  <script src="./addon/hint/sql/sql-hint.min.js" ></script>
+
+  <script src="./mode/shell/shell.min.js"></script>
+
+  <script src="./mode/groovy/groovy.min.js" ></script>
+
+  <script src="./mode/cmake/cmake.min.js" ></script>
+
+  <script src="./mode/css/css.min.js" ></script>
+  <script src="./addon/hint/css/css-hint.min.js"></script>
+  <script src="./addon/lint/css/css-lint.min.js" ></script>
+
+  <script src="./mode/go/go.min.js" ></script>
+
+  <script src="./mode/javascript/javascript.min.js" ></script>
+  <script src="./addon/hint/javascript/javascript-hint.min.js" ></script>
+  <script src="./addon/lint/javascript/javascript-lint.min.js" ></script>
+
+  <script src="./mode/lua/lua.min.js" ></script>
+
+  <script src="./mode/markdown/markdown.min.js" ></script>
+  <script src="./addon/fold/markdown/markdown-fold.min.js"></script>
+
+  <script src="./mode/nginx/nginx.min.js" ></script>
+
+  <script src="./mode/perl/perl.min.js" ></script>
+
+  <script src="./mode/php/php.min.js" ></script>
+
+  <script src="./mode/powershell/powershell.min.js" ></script>
+
+  <script src="./mode/python/python.min.js" ></script>
+
+  <script src="./mode/sass/sass.min.js" ></script>
+
+  <script src="./mode/velocity/velocity.min.js" ></script>
+
+  <script src="./mode/vue/vue.min.js" ></script>
+
+  <script src="./mode/xml/xml.min.js" ></script>
+  <script src="./addon/fold/xml/xml-fold.min.js" ></script>
+  <script src="./addon/hint/xml/xml-hint.min.js" ></script>
+
+  <script src="./mode/yaml/yaml.min.js" ></script>
+  <script src="./addon/lint/yaml/yaml-lint.min.js" ></script>
+
+  <script src="./mode/properties/properties.min.js" ></script>
+
+  <script src="./addon/lint/json/json-lint.min.js" ></script>
+
+  <script src="./addon/lint/html/html-lint.min.js" ></script>
+  <script src="./addon/hint/html/html-hint.min.js" ></script>
+  <script src="./mode/htmlmixed/htmlmixed.min.js" ></script>
+
+  <script src="./mode/htmlembedded/htmlembedded.min.js" ></script>
+
+  <link rel="stylesheet" href="./theme/idea.min.css" />
+  <link rel="stylesheet" href="./theme/eclipse.min.css" />
+  <link rel="stylesheet" href="./theme/icecoder.min.css"  />
+  <link rel="stylesheet" href="./theme/material.min.css"  />
+  <link rel="stylesheet" href="./theme/material-darker.min.css" />
+</head>
+<body>
+    <div id="app">
+      <el-form inline label-position="left" label-width="100px">
+        <el-form-item label="语言类型">
+          <el-select  clearable filterable v-model="metas.resultLang"  placeholder="语言类型" @change="onResultLangChange">
+            <el-option
+                    v-for="item in metas.langList"
+                    :key="item.value"
+                    :label="item.label"
+                    :value="item.value">
+            </el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="主题">
+          <el-select v-model="metas.resultTheme"   clearable filterable placeholder="主题" @change="onResultThemeChange">
+            <el-option
+                    v-for="item in metas.themeList"
+                    :key="item.value"
+                    :label="item.label"
+                    :value="item.value">
+            </el-option>
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <el-card shadow="never">
+        <textarea ref="refEditor"></textarea>
+      </el-card>
+
+  </div>
+</body>
+<script>
+  window.app = new Vue({
+    components: {},
+    data() {
+      return {
+        editor: null,
+        completions: [],
+        metas:{
+          resultLang: 'text',
+          resultTheme: 'idea',
+          langList:[
+            {label: 'Text',value:'text'},
+            {label: 'Yaml',value:'yaml'},
+            {label: 'Properties',value:'properties'},
+            {label: 'Json',value:'json'},
+            {label: 'SQL',value:'sql'},
+            {label: 'Shell',value:'shell'},
+            {label: 'Javascript',value:'javascript'},
+            {label: 'CMake',value:'cmake'},
+            {label: 'Css',value:'css'},
+            {label: 'Go',value:'go'},
+            {label: 'Lua',value:'lua'},
+            {label: 'Markdown',value:'markdown'},
+            {label: 'Nginx',value:'nginx'},
+            {label: 'Perl',value:'perl'},
+            {label: 'Php',value:'php'},
+            {label: 'PowerShell',value:'powershell'},
+            {label: 'Python',value:'python'},
+            {label: 'Sass',value:'sass'},
+            {label: 'Velocity',value:'velocity'},
+            {label: 'Vue',value:'vue'},
+            {label: 'Xml',value:'xml'},
+            {label: 'Html',value:'htmlmixed'},
+          ],
+          themeList:[
+            {label: 'IDEA',value:'idea'},
+            {label: 'Eclipse',value:'eclipse'},
+            {label: 'IceCoder',value:'icecoder'},
+            {label: 'Material',value:'material'},
+            {label: 'Material Darker',value:'material-darker'},
+          ]
+        },
+        form:{
+          script: ''
+        }
+      }
+    },
+    created() {
+
+    },
+    mounted() {
+      this.initEditor();
+    },
+    methods:{
+      collectCompletionItems() {
+        let items = [];
+        let keywords = [
+
+        ]
+        if (keywords) {
+          items.push(...keywords);
+        }
+
+        let completions = [];
+        items.forEach(item => {
+          if (!item) {
+            return;
+          }
+          item = item.trim();
+          if (item == '') {
+            return;
+          }
+          if (!completions.includes(item)) {
+            completions.push(item);
+          }
+        })
+        this.completions = items;
+      },
+      editorCompletionItemCollector(prefix){
+        if(!prefix){
+          prefix='';
+        }
+        prefix=prefix.toLowerCase();
+        let ret= [];
+        let count=50;
+        for (let i=0;i<this.completions.length;i++) {
+          let e=this.completions[i];
+          if(e && e.toLowerCase().indexOf(prefix)>=0){
+            ret.push(e);
+            count--;
+            if(count<=0){
+              break;
+            }
+          }
+        }
+        return ret;
+      },
+      initEditor() {
+        if(this.editor){
+          try {
+            this.editor.toTextArea()
+          }catch (e){
+
+          }
+        }
+        this.editor=null;
+
+        let _this = this;
+
+        function asyncHint(editor, callback, options) {
+          let cur = editor.getCursor();
+          let token = editor.getTokenAt(cur);
+          let prefix = token.string;
+
+          let items = _this.editorCompletionItemCollector(prefix) || []
+          let result = []
+          if (result && result.list) {
+            items = [...items, ...result.list]
+          }
+          callback({
+            list: items,
+            from: CodeMirror.Pos(cur.line, token.start),
+            to: CodeMirror.Pos(cur.line, token.end)
+          });
+        }
+
+        asyncHint.async = true;
+        asyncHint.supportsSelection = true;
+
+        let dom = this.$refs.refEditor;
+        this.editor = CodeMirror.fromTextArea(dom, {  // 标识到textarea
+          value: "",  // 文本域默认显示的文本
+          mode: this.metas.resultLang || '',  // 模式
+          theme: this.metas.resultTheme || "idea",  // CSS样式选择
+          indentUnit: 2,  // 缩进单位，默认2
+          smartIndent: true,  // 是否智能缩进
+          tabSize: 4,  // Tab缩进，默认4
+          readOnly: false,  // 是否只读，默认false
+          showCursorWhenSelecting: true,
+          hintOptions: {
+            completeSingle: false,
+            hint: asyncHint,
+          },
+          lineNumbers: true  // 是否显示行号
+          // .. 还有好多，翻译不完。需要的去看http://codemirror.net/doc/manual.html#config
+        });
+        this.editor.on("keypress", () => {
+          //编译器内容更改事件
+          this.editor.showHint();
+        });
+        this.editor.display.wrapper.style.height='480px'
+        this.editor.setValue(this.form.script || '');
+        this.editor.on('change', () => {
+          this.form.script = this.editor.getValue();
+        });
+
+
+      },
+      onResultLangChange(){
+        this.initEditor()
+      },
+      onResultThemeChange(){
+        this.initEditor()
+      }
+    }
+  });
+  window.app.$mount('#app');
+</script>
+</html>
