@@ -15,3 +15,13 @@ mkdir output
 :: gox -os "windows linux darwin" -arch "386 amd64 arm64" -output "output/{{.OS}}-{{.Arch}}/goboot"
 
 gox -osarch "windows/386 windows/amd64 linux/386 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64" -output "output/{{.OS}}-{{.Arch}}/goboot"
+
+echo archive ...
+copy output\windows-amd64\goboot.exe output\goboot.exe 
+copy output\linux-amd64\goboot output\goboot.elf
+copy *.yml output\
+copy *.sh output\
+copy *.bat output\
+del /f /s /q output\build.*
+
+echo done.

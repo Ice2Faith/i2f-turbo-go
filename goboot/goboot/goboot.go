@@ -6,19 +6,21 @@ package goboot
 // 以及基于反射的URL自动映射处理函数能力
 // 简单使用 见 readme.md 详细说明
 // 依赖包下载
-// go get github.com/gin-gonic/gin
-// go get github.com/gin-contrib/gzip
-// go get github.com/gin-contrib/cors
-// go get github.com/gin-contrib/sessions
-// go get gopkg.in/yaml.v3
-// go get github.com/redis/go-redis/v9
-// go get github.com/gin-contrib/sessions/redis@v0.0.5
-// go get github.com/google/uuid
-// go get github.com/go-sql-driver/mysql
-// go get github.com/lib/pq
-// go get gorm.io/gorm
-// go get gorm.io/driver/mysql
-// go get gorm.io/driver/postgres
+/*
+go get github.com/gin-gonic/gin
+go get github.com/gin-contrib/gzip
+go get github.com/gin-contrib/cors
+go get github.com/gin-contrib/sessions
+go get gopkg.in/yaml.v3
+go get github.com/redis/go-redis/v9
+go get github.com/gin-contrib/sessions/redis@v0.0.5
+go get github.com/google/uuid
+go get github.com/go-sql-driver/mysql
+go get github.com/lib/pq
+go get gorm.io/gorm
+go get gorm.io/driver/mysql
+go get gorm.io/driver/postgres
+*/
 // /////////////////////////////////////////////////////////
 import (
 	"context"
@@ -1424,6 +1426,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 				}, files...)
 			}
 
+			/*language=html*/
 			html := `
 			<html lang="zh">
     <head>
@@ -1432,6 +1435,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
         <title>
 			`
 			html = html + regularFilePath
+			/*language=html*/
 			html = html +
 				`
 			</title>
@@ -1529,11 +1533,13 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
             <div class="file-path">`
 			html = html + regularFilePath
 			if !server.DisableUpload {
+				/*language=html*/
 				html = html + `
 				<button class="file-upload" id="fileUploadButton" onclick="uploadFile()">upload</button>
                 <input class="file-upload" type="file" id="fileInputDom" onchange="onFileChange(this)" style="display: none;"/>
 				`
 			}
+			/*language=html*/
 			html = html +
 				`</div>
             <hr class="file-divider"/>
@@ -1542,33 +1548,41 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
         </div>
         
     </body>
-    <script>
+    <script>`
+
+			html= html + `
         const pathBase = "`
 			html = html + pathBase
 			html = html + `"
 
         const pathList = "`
 			html = html + pathList
+			/*language=javascript*/
 			html = html + `"
 
         const pathUpload = "`
 			html = html + pathUpload
+			/*language=javascript*/
 			html = html + `"
 
         const pathDownload = "`
 			html = html + pathDownload
+			/*language=javascript*/
 			html = html + `"
 
 		const pathPublic = "`
 			html = html + pathPublic
+			/*language=javascript*/
 			html = html + `"
 
         const pathBrowser = "`
 			html = html + pathBrowser
+			/*language=javascript*/
 			html = html + `"
 
 		const fileList = `
 			html = html + Any2JsonString(files)
+			/*language=javascript*/
 			html = html + `
 
 		function renderFileList(){
@@ -1585,12 +1599,14 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 					"            <span class=\"file-operation\">\n"
 			`
 			if !server.DisableDownload {
+				/*language=javascript*/
 				html = html + `
 				if(!item.isDir){
 							html+="   <button class=\"file-download\" onclick=\"downloadFile("+(i)+")\">download</button>\n" 
 						}
 				`
 			}
+			/*language=javascript*/
 			html = html + `
 				html+="            </span>\n" +
 					"        </li>"
@@ -1619,6 +1635,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 			} else {
 			`
 			if !server.DisableDownload {
+				/*language=javascript*/
 				html = html + `
 					let nextPath = '/' + pathDownload + '/' + encodeURI(fileItem.path)
 					nextPath = nextPath.replaceAll('//', '/') + "?type=inline"
@@ -1645,15 +1662,13 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
                             nextPath = nextPath.substring(idx)
                         }
                         nextPath = '../..' + nextPath
-                        let readerPath = '/' + pathPublic + '/viewer/text-reader.html'
+                        let readerPath = '/' + pathPublic + '/viewer/text-viewer.html'
                         let readerLang = 'text'
                         if (suffix) {
                             readerLang = suffix
                         }
                         nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath) + '&lang=' + readerLang
-                    }
-
-					if(['.mp4','.avi','.mkv','.rmvb','.wav','.flv'].includes(suffix)){
+                    } else if(['.mp4','.avi','.mkv','.rmvb','.wav','.flv'].includes(suffix)){
 						let idx=nextPath.indexOf('/download/')
 						if(idx>=0){
 							nextPath=nextPath.substring(idx)
@@ -1665,15 +1680,61 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 							playType='FLV'
 						}
 						nextPath = playPath.replaceAll('//', '/')+'?url='+encodeURIComponent(nextPath)+'&type='+playType
-					}
+					} else if (['.docx'].includes(suffix)) {
+                        let idx = nextPath.indexOf('/download/')
+                        if (idx >= 0) {
+                            nextPath = nextPath.substring(idx)
+                        }
+                        nextPath = '../..' + nextPath
+                        let readerPath = '/' + pathPublic + '/viewer/docx-viewer.html'
+                        nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath)
+                    } else if (['.xlsx'].includes(suffix)) {
+                        let idx = nextPath.indexOf('/download/')
+                        if (idx >= 0) {
+                            nextPath = nextPath.substring(idx)
+                        }
+                        nextPath = '../..' + nextPath
+                        let readerPath = '/' + pathPublic + '/viewer/xlsx-viewer.html'
+                        nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath)
+                    } else if (['.pptx'].includes(suffix)) {
+                        let idx = nextPath.indexOf('/download/')
+                        if (idx >= 0) {
+                            nextPath = nextPath.substring(idx)
+                        }
+                        nextPath = '../..' + nextPath
+                        let readerPath = '/' + pathPublic + '/viewer/pptx-viewer.html'
+                        nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath)
+                    } else if (['.pdf'].includes(suffix)) {
+                        let idx = nextPath.indexOf('/download/')
+                        if (idx >= 0) {
+                            nextPath = nextPath.substring(idx)
+                        }
+                        nextPath = '../..' + nextPath
+                        let readerPath = '/' + pathPublic + '/viewer/pdf-viewer.html'
+                        nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath)
+                    } else if (['.fbx', '.glb', '.gltf'].includes(suffix)) {
+                        let idx = nextPath.indexOf('/download/')
+                        if (idx >= 0) {
+                            nextPath = nextPath.substring(idx)
+                        }
+                        nextPath = '../..' + nextPath
+                        let readerPath = '/' + pathPublic + '/viewer/d3-viewer.html'
+                        let modelType='glb'
+						if('.fbx'==suffix){
+							modelType='fbx'
+						}
+                        nextPath = readerPath.replaceAll('//', '/') + '?modelUrl=' + encodeURIComponent(nextPath) + '&modelType=' + modelType
+                    }
 		
 					window.location.href = getBasePath() + nextPath
 				`
 			} else {
+				/*language=javascript*/
 				html = html + `
 					debugger
 				`
 			}
+			/*language=javascript*/
 			html = html + `
 			}
 		}
@@ -1685,6 +1746,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 			} else {
 			 `
 			if !server.DisableDownload {
+				/*language=javascript*/
 				html = html + `
 					let nextPath = '/' + pathDownload + '/' + encodeURI(fileItem.path)
 					nextPath = nextPath.replaceAll('//', '/')
@@ -1699,6 +1761,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 					document.body.removeChild(dom)
 				`
 			} else {
+				/*language=javascript*/
 				html = html + `
 					debugger
 				`
@@ -1708,6 +1771,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 
 		}`
 			if !server.DisableUpload {
+				/*language=javascript*/
 				html = html + `
 			function uploadFile(){
 				var dom = document.querySelector('#fileInputDom');
@@ -1739,7 +1803,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 			}
 				`
 			}
-
+			/*language=html*/
 			html = html + `
     </script>
     

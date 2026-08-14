@@ -139,10 +139,18 @@
                 tbody.processed=true;
                 let rows = tbody.querySelectorAll('tr');
 
+                let columnCount=rows[0].children.length;
+                for (let i = 0; i < rows.length; i++) {
+                    let row=rows[i];
+                    if(row.children && row.children.length>columnCount){
+                        columnCount=row.children.length;
+                    }
+                }
+
                 // 顶部的A,B,C...列名
                 let firstRow=rows[0];
                 let headRow=document.createElement('tr');
-                for(let i=0;i<firstRow.children.length;i++){
+                for(let i=0;i<columnCount;i++){
                     let headCell=document.createElement('th');
                     headCell.textContent = XLSX.utils.encode_col(i);
                     headRow.appendChild(headCell);
@@ -181,6 +189,7 @@
         border: 1px solid #ddd;
         padding: 8px;
         text-align: left;
+        min-width: 80px;
     }
     .xlsx-viewer-body th {
         background-color: #f2f2f2;
@@ -191,13 +200,13 @@
     }
 
     @media (min-width: 320px) and (max-width: 719px) {
-        .xlsx-viewer-body,.xlsx-viewer-head {
+        .xlsx-viewer-head {
             zoom: 0.5;
         }
     }
 
     @media (max-width: 320px) {
-        .xlsx-viewer-body.xlsx-viewer-head {
+        .xlsx-viewer-head {
             zoom: 0.3;
         }
     }

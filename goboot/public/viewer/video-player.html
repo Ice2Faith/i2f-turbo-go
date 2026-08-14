@@ -206,7 +206,7 @@
             if (!isSeeking) return;
             const deltaX = currentX - startX;
             const seekStep = 5;
-            const threshold = 100;
+            let threshold = Math.min(Math.max(Math.floor(window.innerWidth/6),30),100);
 
             if (Math.abs(deltaX) > threshold) {
                 hasSeeked = true;

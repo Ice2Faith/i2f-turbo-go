@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- 移动端适配核心：控制视口宽度和缩放比例 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>pdf-viewer</title>
+    <script src="../lib/vue/vue-2.js"></script>
+
+    <script src="../lib/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="../lib/pdf.js/3.11.174/pdf.worker.min.js"></script>
+</head>
+<body>
+<div id="app">
+    <div id="pdf-container" :style="'width: '+width+';height: '+height+'; overflow-y: auto; '"></div>
+</div>
+</body>
+<script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '../lib/pdf.js/3.11.174/pdf.worker.min.js';
+
+    window.app = new Vue({
+        name: "PdfViewer",
+        data() {
+            return {
+                url: '',
+                width: '100%',
+                height: '100vh',
+            }
+        },
+        watch: {
+            url:{
+                immidate: true,
+                handler:function(val,old){
+                    if(val){
+                        this.renderPdf();
+                    }
+                }
+            },
+        },
+        computed: {},
+        mounted() {
+            this.resolveQueryParameters();
+        },
+        methods: {
+            resolveQueryParameters() {
+                let searchParams = new URL(window.location.href).searchParams
+                this.url = searchParams.get('url');
+                this.width = searchParams.get('width') || this.width || '100%';
+                this.height = searchParams.get('height') || this.height || '100vh';
+            },
+            messageError(msg, limit) {
+                window._lastError = msg;
+                if (limit && limit >= 0) {
+                    if (msg && msg.length > limit) {
+                        msg = msg.substring(0, limit) + '...'
+                    }
+                }
+                this.$message.error(msg)
+            },
+            async renderPdf(){
+                this.previewPdfFromUrl(this.url,'pdf-container')
+            },
+            async previewPdfFromUrl(url, containerId) {
+                const container = document.getElementById(containerId);
+                if (!container) {
+                    return;
+                }
+
+                try {
+                    const loadingTask = pdfjsLib.getDocument(url);
+                    const pdf = await loadingTask.promise;
+                    const totalPages = pdf.numPages;
+
+                    // 遍历每一页并渲染
+                    for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+                        const page = await pdf.getPage(pageNum);
+
+                        // 计算缩放比例：让 PDF 宽度适应手机屏幕
+                        const viewport = page.getViewport({ scale: 1 });
+                        const scale = (window.innerWidth - 20) / viewport.width; // 20px 为左右边距
+                        const scaledViewport = page.getViewport({ scale });
+
+                        // 创建 Canvas 并渲染
+                        const canvas = document.createElement('canvas');
+                        const context = canvas.getContext('2d');
+                        canvas.width = scaledViewport.width;
+                        canvas.height = scaledViewport.height;
+
+                        container.appendChild(canvas);
+
+                        await page.render({
+                            canvasContext: context,
+                            viewport: scaledViewport
+                        }).promise;
+                    }
+                } catch (error) {
+                    console.error('Pdf 文档预览失败:', error);
+                    container.innerHTML = '<p style="color: red;">文档加载失败，请稍后重试。</p>';
+                }
+            }
+        }
+    })
+
+    window.app.$mount('#app');
+</script>
+<style>
+    * {
+        padding: 0;
+        margin: 0;
+        box-sizing: content-box;
+    }
+
+    /* Canvas 样式：设置最大宽度为 100% 以适应手机屏幕 */
+    #pdf-container canvas {
+        max-width: 100%;
+        height: auto !important; /* 覆盖 pdf.js 默认的内联高度，防止移动端排版错乱 */
+        margin-bottom: 10px;
+        background: #fff;
+        box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+
+    #pdf-container{
+
+    }
+
+    @media (min-width: 320px) and (max-width: 719px) {
+
+    }
+
+    @media (max-width: 320px) {
+
+    }
+
+</style>
+</html>

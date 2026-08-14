@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- 移动端适配核心：控制视口宽度和缩放比例 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>pptx-viewer</title>
+    <script src="../lib/vue/vue-2.js"></script>
+
+    <script src="../lib/pptx-preview@1.0.7/dist/pptx-preview.umd.min.js"></script>
+</head>
+<body>
+<div id="app">
+    <div id="pptx-container" :style="'width: '+width+';height: '+height+'; overflow-y: auto; '"></div>
+</div>
+</body>
+<script>
+    window.app = new Vue({
+        name: "PptxViewer",
+        data() {
+            return {
+                url: '',
+                width: '100%',
+                height: '100vh',
+            }
+        },
+        watch: {
+            url: {
+                immidate: true,
+                handler: function (val, old) {
+                    if (val) {
+                        this.renderPptx();
+                    }
+                }
+            },
+        },
+        computed: {},
+        mounted() {
+            this.resolveQueryParameters();
+        },
+        methods: {
+            resolveQueryParameters() {
+                let searchParams = new URL(window.location.href).searchParams
+                this.url = searchParams.get('url');
+                this.width = searchParams.get('width') || this.width || '100%';
+                this.height = searchParams.get('height') || this.height || '100vh';
+            },
+            messageError(msg, limit) {
+                window._lastError = msg;
+                if (limit && limit >= 0) {
+                    if (msg && msg.length > limit) {
+                        msg = msg.substring(0, limit) + '...'
+                    }
+                }
+                this.$message.error(msg)
+            },
+            async renderPptx() {
+                this.previewPptxFromUrl(this.url, 'pptx-container')
+            },
+            async previewPptxFromUrl(url, containerId) {
+                const container = document.getElementById(containerId);
+                if (!container) {
+                    return;
+                }
+
+                try {
+                    // 3. 初始化预览器
+                    const pptxPreviewer = pptxPreview.init(container, {
+                        width: this.cssLengthToPx(this.width),
+                        height: this.cssLengthToPx(this.height)
+                    });
+
+
+                    // 4. 获取 PPTX 的 URL 并读取为 ArrayBuffer 格式，传给预览器
+                    await fetch(url)
+                        .then(response => response.arrayBuffer())
+                        .then(arrayBuffer => {
+                            pptxPreviewer.preview(arrayBuffer);
+                        })
+                } catch (error) {
+                    console.error('PPT 文档预览失败:', error);
+                    container.innerHTML = '<p style="color: red;">文档加载失败，请稍后重试。</p>';
+                }
+            },
+            /**
+             * 将任意合法的 CSS 长度字符串转换为像素值
+             * @param {string} lengthStr - 需要转换的长度字符串，如 '100vh', '50vw', 'calc(100vh - 20px)'
+             * @returns {number} 转换后的像素值
+             */
+            cssLengthToPx(lengthStr) {
+                // 1. 创建一个隐藏的测试元素
+                const testEl = document.createElement('div');
+
+                // 设置样式：绝对定位移出可视区，不可见，且不受父级布局影响
+                testEl.style.position = 'fixed';
+                testEl.style.visibility = 'hidden';
+                testEl.style.opacity=0;
+                testEl.style.left = '-9999px';
+                testEl.style.top = '-9999px';
+
+                // 2. 将传入的长度字符串赋值给 width 属性
+                testEl.style.width = lengthStr;
+
+                // 3. 将元素挂载到 DOM 树中（必须挂载才能触发浏览器的样式计算）
+                document.body.appendChild(testEl);
+
+                // 4. 读取浏览器计算后的实际像素宽度
+                const pxValue = testEl.offsetWidth;
+
+                // 5. 清理 DOM，移除测试元素
+                document.body.removeChild(testEl);
+
+                return pxValue;
+            }
+        }
+    })
+
+    window.app.$mount('#app');
+</script>
+<style>
+    * {
+        padding: 0;
+        margin: 0;
+        box-sizing: content-box;
+    }
+
+    #pptx-container {
+
+    }
+
+    @media (min-width: 320px) and (max-width: 719px) {
+
+    }
+
+    @media (max-width: 320px) {
+
+    }
+
+</style>
+</html>
