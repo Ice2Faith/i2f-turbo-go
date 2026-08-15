@@ -32,6 +32,7 @@ import (
 	"io/fs"
 	"io/ioutil"
 	"math"
+	"math/rand"
 	"mime"
 	"net"
 	"net/http"
@@ -1262,6 +1263,17 @@ func ConvertAsHumanSizeText(size int64) string {
 	return fmt.Sprintf("%.2f%s", f, units[i])
 }
 
+// isDirOrSymlinkToDir 判断路径是否为真实目录，或是指向目录的符号链接
+func isDirOrSymlinkToDir(path string) bool {
+    // os.Stat 会自动跟随符号链接，获取最终目标的属性
+    info, err := os.Stat(path)
+    if err != nil {
+        // 如果目标不存在、权限不足或发生其他错误，视为非目录
+        return false
+    }
+    return info.IsDir()
+}
+
 func ListFiles(fullPath string, rootPath string) ([]FileInfoItem, error) {
 
 	var files []FileInfoItem
@@ -1289,7 +1301,7 @@ func ListFiles(fullPath string, rootPath string) ([]FileInfoItem, error) {
 			Name:       info.Name(),
 			Size:       info.Size(),
 			SizeText:   ConvertAsHumanSizeText(info.Size()),
-			IsDir:      info.IsDir(),
+			IsDir:      isDirOrSymlinkToDir(path),
 			ModifyTime: info.ModTime().Format("2006-01-02 15:04:05"),
 		})
 	}
@@ -1395,6 +1407,24 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 				c.JSON(500, ApiError(500, filePath+" list error!"))
 				return
 			}
+			
+			// 获取是否随机排序
+			sortRandom := c.Query("sort_random")
+
+			requireSortRandom := sortRandom == "1" || sortRandom == "true"
+			
+			if requireSortRandom {
+				// 1. 先对整个列表进行随机打乱
+				rand.Shuffle(len(files), func(i, j int) {
+					files[i], files[j] = files[j], files[i]
+				})
+
+				// 2. 使用稳定排序，确保目录在前，且同类型内部保持刚才的随机顺序
+				sort.SliceStable(files, func(i, j int) bool {
+					return files[i].IsDir && !files[j].IsDir
+				})
+			}
+			
 			if info != nil {
 				parentDir := filepath.Dir(fullPath)
 				relPath, _ := filepath.Rel(rootPath, parentDir)
@@ -1446,26 +1476,6 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
             padding: 0;
             font-size: 16px;
         }
-		@media screen and (max-width:320px) {
-			.file-page *{
-            	font-size: 6px;
-        	}
-		}
-		@media screen and (min-width:320px) and (max-width:480px) {
-			.file-page *{
-            	font-size: 8px;
-        	}
-		}
-		@media screen and (min-width:480px) and (max-width:640px) {
-			.file-page *{
-            	font-size: 10px;
-        	}
-		}
-		@media screen and (min-width:640px) and (max-width:960px) {
-			.file-page *{
-            	font-size: 14px;
-        	}
-		}
         .file-page button{
             border: none;
             outline: none;
@@ -1484,10 +1494,13 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 		.file-page button:disabled{
 			filter: grayscale(0.6);
 		}
-        .file-path{
+        .file-path *{
             font-size: 22px;
             font-weight: bold;
         }
+		.file-path-name{
+
+		}
         .file-divider{
             margin: 5px 3px;
         }
@@ -1526,12 +1539,64 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
             float: right;
             background: limegreen !important;
         }
+		.file-sort-random{
+			    margin-right: 8px;
+				color: dodgerblue;
+				font-weight: bold;
+				border: solid 1px;
+				padding: 0px 5px;
+				box-shadow: 2px 3px 5px;
+		}
+
+		@media screen and (max-width:320px) {
+			.file-page *{
+            	font-size: 6px;
+        	}
+			.file-path *{
+				font-size: 10px;
+			}
+		}
+		@media screen and (min-width:320px) and (max-width:480px) {
+			.file-page *{
+            	font-size: 8px;
+        	}
+			.file-path *{
+				font-size: 12px;
+			}
+		}
+		@media screen and (min-width:480px) and (max-width:640px) {
+			.file-page *{
+            	font-size: 10px;
+        	}
+			.file-path *{
+				font-size: 14px;
+			}
+		}
+		@media screen and (min-width:640px) and (max-width:960px) {
+			.file-page *{
+            	font-size: 14px;
+        	}
+			.file-path *{
+				font-size: 18px;
+			}
+		}
     </style>
     </head>
     <body>
         <div class="file-page">
-            <div class="file-path">`
-			html = html + regularFilePath
+            <div class="file-path">
+            	<span class="file-sort-random" onclick="onToggleSortRandom()">`
+			if requireSortRandom {
+				html=html + "random"
+			} else {
+				html= html + "sorted"
+			}
+			/*language=html*/
+			html=html + `</span>`
+
+			/*language=html*/
+			html = html + `<span class="file-path-name">` +regularFilePath + `</span>`
+
 			if !server.DisableUpload {
 				/*language=html*/
 				html = html + `
@@ -1608,32 +1673,47 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 			}
 			/*language=javascript*/
 			html = html + `
-				html+="            </span>\n" +
-					"        </li>"
-			}
-			
-			listDom.innerHTML=html
-		}
-
-		renderFileList()
-
-        function getBasePath(){
-            let basePath=''
-            let curPath=window.location.pathname
-            let idx = curPath.indexOf(pathBrowser)
-            if(idx>=0){
-                basePath=curPath.substring(0,idx)
-            }
-            return basePath
-        }
-        function openFile(index) {
-			let fileItem=fileList[index]
-			if (fileItem.isDir) {
-				let nextPath = '/' + pathBrowser + '/' + encodeURI(fileItem.path)
-				nextPath = nextPath.replaceAll('//', '/')
-				window.location.href = getBasePath() + nextPath
-			} else {
-			`
+										html+="            </span>\n" +
+											"        </li>"
+									}
+									
+									listDom.innerHTML=html
+								}
+						
+								renderFileList()
+						
+								function getBasePath(){
+									let basePath=''
+									let curPath=window.location.pathname
+									let idx = curPath.indexOf(pathBrowser)
+									if(idx>=0){
+										basePath=curPath.substring(0,idx)
+									}
+									return basePath
+								}
+								function onToggleSortRandom(){
+                                    let url = new URL(window.location.href);
+									let sortRandom=url.searchParams.get('sort_random');
+									if(sortRandom==1 || sortRandom=='true'){
+                                        url.searchParams.delete('sort_random');
+                                        window.location.href=url.href;
+									}else{
+                                        url.searchParams.set('sort_random','1');
+                                        window.location.href=url.href;
+									}
+								}
+								function openFile(index) {
+									let fileItem=fileList[index]
+									if (fileItem.isDir) {
+										let nextPath = '/' + pathBrowser + '/' + encodeURI(fileItem.path)
+										nextPath = nextPath.replaceAll('//', '/')
+										let sortRandom=new URL(window.location.href).searchParams.get('sort_random')
+										if(sortRandom){
+											nextPath=nextPath + '?sort_random=' + sortRandom
+										}
+										window.location.href = getBasePath() + nextPath
+									} else {
+									`
 			if !server.DisableDownload {
 				/*language=javascript*/
 				html = html + `
