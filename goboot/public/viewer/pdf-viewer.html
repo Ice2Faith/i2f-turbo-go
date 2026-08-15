@@ -44,6 +44,10 @@
         methods: {
             resolveQueryParameters() {
                 let searchParams = new URL(window.location.href).searchParams
+                let title=searchParams.get('title');
+                if(title){
+                    window.title=title;
+                }
                 this.url = searchParams.get('url');
                 this.width = searchParams.get('width') || this.width || '100%';
                 this.height = searchParams.get('height') || this.height || '100vh';

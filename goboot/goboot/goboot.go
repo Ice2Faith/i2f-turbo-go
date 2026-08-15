@@ -1747,7 +1747,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
                         if (suffix) {
                             readerLang = suffix
                         }
-                        nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath) + '&lang=' + readerLang
+                        nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath) + '&lang=' + readerLang + '&title=' + encodeURIComponent(name)
                     } else if(['.mp4','.avi','.mkv','.rmvb','.wav','.flv'].includes(suffix)){
 						let idx=nextPath.indexOf('/download/')
 						if(idx>=0){
@@ -1759,7 +1759,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 						if('.flv'==suffix){
 							playType='FLV'
 						}
-						nextPath = playPath.replaceAll('//', '/')+'?url='+encodeURIComponent(nextPath)+'&type='+playType
+						nextPath = playPath.replaceAll('//', '/')+'?url='+encodeURIComponent(nextPath)+'&type='+playType + '&title=' + encodeURIComponent(name)
 					} else if (['.docx'].includes(suffix)) {
                         let idx = nextPath.indexOf('/download/')
                         if (idx >= 0) {
@@ -1767,7 +1767,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
                         }
                         nextPath = '../..' + nextPath
                         let readerPath = '/' + pathPublic + '/viewer/docx-viewer.html'
-                        nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath)
+                        nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath) + '&title=' + encodeURIComponent(name)
                     } else if (['.xlsx'].includes(suffix)) {
                         let idx = nextPath.indexOf('/download/')
                         if (idx >= 0) {
@@ -1775,7 +1775,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
                         }
                         nextPath = '../..' + nextPath
                         let readerPath = '/' + pathPublic + '/viewer/xlsx-viewer.html'
-                        nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath)
+                        nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath) + '&title=' + encodeURIComponent(name)
                     } else if (['.pptx'].includes(suffix)) {
                         let idx = nextPath.indexOf('/download/')
                         if (idx >= 0) {
@@ -1783,7 +1783,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
                         }
                         nextPath = '../..' + nextPath
                         let readerPath = '/' + pathPublic + '/viewer/pptx-viewer.html'
-                        nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath)
+                        nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath) + '&title=' + encodeURIComponent(name)
                     } else if (['.pdf'].includes(suffix)) {
                         let idx = nextPath.indexOf('/download/')
                         if (idx >= 0) {
@@ -1791,7 +1791,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
                         }
                         nextPath = '../..' + nextPath
                         let readerPath = '/' + pathPublic + '/viewer/pdf-viewer.html'
-                        nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath)
+                        nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath) + '&title=' + encodeURIComponent(name)
                     } else if (['.fbx', '.glb', '.gltf'].includes(suffix)) {
                         let idx = nextPath.indexOf('/download/')
                         if (idx >= 0) {
@@ -1803,7 +1803,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 						if('.fbx'==suffix){
 							modelType='fbx'
 						}
-                        nextPath = readerPath.replaceAll('//', '/') + '?modelUrl=' + encodeURIComponent(nextPath) + '&modelType=' + modelType
+                        nextPath = readerPath.replaceAll('//', '/') + '?modelUrl=' + encodeURIComponent(nextPath) + '&modelType=' + modelType + '&title=' + encodeURIComponent(name)
                     }
 		
 					window.location.href = getBasePath() + nextPath

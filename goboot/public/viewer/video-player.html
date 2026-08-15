@@ -113,6 +113,10 @@
         methods: {
             resolveQueryParameters() {
                 let searchParams = new URL(window.location.href).searchParams
+                let title=searchParams.get('title');
+                if(title){
+                    window.title=title;
+                }
                 this.url = searchParams.get('url');
                 this.type = searchParams.get('type') || this.type || 'MP4';
                 this.width = searchParams.get('width') || this.width || '100%';

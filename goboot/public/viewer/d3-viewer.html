@@ -158,6 +158,10 @@
 
     let modelUrl=currentUrl.searchParams.get('modelUrl') || './test.glb'
     let modelType=currentUrl.searchParams.get('modelType')
+    let title=currentUrl.searchParams.get('title')
+    if(title){
+        window.title=title;
+    }
     loadModel(modelUrl,modelType);
 </script>
 </body>

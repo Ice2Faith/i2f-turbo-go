@@ -212,6 +212,10 @@
         methods: {
             resolveQueryParameters() {
                 let searchParams = new URL(window.location.href).searchParams
+                let title=searchParams.get('title');
+                if(title){
+                    window.title=title;
+                }
                 this.url = searchParams.get('url');
                 this.mode = searchParams.get('mode') || this.mode || 'normal';
                 this.lang = searchParams.get('lang') || this.lang || 'text';
