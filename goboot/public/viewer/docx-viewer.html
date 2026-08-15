@@ -45,7 +45,7 @@
                 let searchParams = new URL(window.location.href).searchParams
                 let title=searchParams.get('title');
                 if(title){
-                    window.title=title;
+                    document.querySelector('head title').innerText=title;
                 }
                 this.url = searchParams.get('url');
                 this.width = searchParams.get('width') || this.width || '100%';

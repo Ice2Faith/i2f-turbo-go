@@ -160,7 +160,7 @@
     let modelType=currentUrl.searchParams.get('modelType')
     let title=currentUrl.searchParams.get('title')
     if(title){
-        window.title=title;
+        document.querySelector('head title').innerText=title;
     }
     loadModel(modelUrl,modelType);
 </script>
