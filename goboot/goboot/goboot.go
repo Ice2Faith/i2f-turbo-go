@@ -1739,7 +1739,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
                          '.java', '.py', '.go', '.pl', '.groovy', '.scala', '.kts',
                          '.gitignore', '.gitattributes',
                          '.vue', '.lua', '.php',
-                         '.repo','.dtd'
+                         '.repo','.dtd','.ps1'
                     ].includes(suffix)
                     || ['dockerfile','hosts','license'
                     ].includes(lowerName)) {
@@ -2086,7 +2086,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
                     ".java", ".py", ".go", ".pl", ".groovy", ".scala", ".kts",
                     ".gitignore", ".gitattributes",
                     ".vue", ".lua", ".php",
-                    ".repo",".dtd",
+                    ".repo",".dtd",".ps1",
 				}, suffix) || SliceContains([]string{
 				    "dockerfile","hosts","license",
                     },lowerName){
