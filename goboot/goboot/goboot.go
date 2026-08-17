@@ -2010,8 +2010,14 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
             }, downloadType) {
                 suffix := strings.ToLower(filepath.Ext(filepath.Base(fullPath)))
                 if SliceContains([]string{
-                    ".doc", ".xls", ".ppt",
-                }, suffix){
+					".doc", ".dot", ".dotx", ".dotm", ".rtf",
+					".wps", ".wpt", ".odt", ".ott", ".fodt", ".epub",
+				}, suffix) || SliceContains([]string{
+					".xls", ".xlsm", ".xlt", ".xltm", ".tsv",
+					".ods", ".ots", ".et", ".ett",
+				}, suffix) || SliceContains([]string{
+					".ppt", ".pps", ".dps", ".odp", ".otp", ".ppsx",
+				}, suffix){
                     outpath,err := ConvertOfficeFile(fullPath)
                     if err==nil {
                         fullPath=outpath
@@ -2204,14 +2210,21 @@ func ConvertOfficeFile(inputFilePath string) (outputPath string, err error) {
 
 	// 2. 根据扩展名确定目标格式
 	var targetFormat string
-	switch ext {
-	case ".doc":
+	if SliceContains([]string{
+		".doc", ".dot", ".dotx", ".dotm", ".rtf",
+		".wps", ".wpt", ".odt", ".ott", ".fodt", ".epub",
+	}, ext) {
 		targetFormat = "docx"
-	case ".xls":
+	} else if SliceContains([]string{
+		".xls", ".xlsm", ".xlt", ".xltm", ".tsv",
+		".ods", ".ots", ".et", ".ett",
+	}, ext) {
 		targetFormat = "xlsx"
-	case ".ppt":
+	} else if SliceContains([]string{
+		".ppt", ".pps", ".dps", ".odp", ".otp", ".ppsx",
+	}, ext) {
 		targetFormat = "pptx"
-	default:
+	} else {
 		return "", fmt.Errorf("un-support office input format: %s", ext)
 	}
 
