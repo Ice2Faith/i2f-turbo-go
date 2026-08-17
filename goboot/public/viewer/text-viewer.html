@@ -82,7 +82,8 @@
 </head>
 <body>
 <div id="app">
-    <div class="main-editor">
+    <div class="main-editor"
+         v-loading="loading">
         <div v-if="controls==1" class="main-editor-header">
             <el-form inline label-position="left" label-width="80px">
                 <el-form-item label="编辑器">
@@ -128,6 +129,7 @@
                 url: '',
                 controls: '1',
                 // /////////////////////////////////////
+                loading: false,
                 editor: null,
                 jsonEditor: null,
                 completions: [],
@@ -189,7 +191,7 @@
         },
         watch: {
             url:{
-                immidate: true,
+                immediate: true,
                 handler:function(val,old){
                     if(val){
                         this.getTextContentFromUrl();
@@ -197,7 +199,7 @@
                 }
             },
             mode:{
-                immidate: true,
+                immediate: true,
                 handler:function(val,old){
                     this.onModeChange();
                 }
@@ -292,12 +294,14 @@
                 });
             },
             getTextContentFromUrl(){
+                this.loading=true;
                 this.downloadFile(this.url).then(res => {
                     const blob = new Blob([res.data], {type: res.contentType})
                     return this.blobToStringWithFileReader(blob)
                 }).then(text=>{
                     this.content=text;
                     this.onModeChange();
+                    this.loading=false;
                 }).catch(err => {
                     fetch(this.url)
                         .then(res=>res.text())
@@ -306,6 +310,8 @@
                             this.onModeChange();
                         }).catch(err => {
                         this.messageError(err.errorMessage || err.message || '操作失败', 300)
+                    }).finally(()=>{
+                        this.loading=false;
                     })
                 })
             },

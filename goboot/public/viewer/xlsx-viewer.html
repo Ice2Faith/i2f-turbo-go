@@ -25,6 +25,7 @@
                      :name="item"></el-tab-pane>
     </el-tabs>
     <div id="excel-container"
+         v-loading="loading"
          class="xlsx-viewer-body"
          :style="'width: '+width+';height: calc('+height+' - 64px); overflow-y: auto; '">
         <!-- 表格将被渲染到这里 -->
@@ -39,6 +40,7 @@
             return {
                 url: '',
                 // ///////////////////
+                loading: false,
                 workbookUrl: '',
                 workbook: null,
                 sheetNames: [],
@@ -49,7 +51,7 @@
         },
         watch: {
             url:{
-                immidate: true,
+                immediate: true,
                 handler:function(val,old){
                     if(val){
                         this.renderXlsx();
@@ -57,7 +59,7 @@
                 }
             },
             activeSheet:{
-                immidate: true,
+                immediate: true,
                 handler:function(val,old){
                     if(val){
                         this.renderXlsx();
@@ -98,6 +100,7 @@
                     return;
                 }
 
+                this.loading=true;
                 try {
 
 
@@ -132,6 +135,8 @@
                 } catch (error) {
                     console.error('Excel 文档预览失败:', error);
                     container.innerHTML = '<p style="color: red;">文档加载失败，请稍后重试。</p>';
+                }finally {
+                    this.loading=false;
                 }
             },
             addRowNumberColumnLabels(){

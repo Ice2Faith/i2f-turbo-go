@@ -39,8 +39,10 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"reflect"
 	"sort"
 	"strconv"
@@ -1726,6 +1728,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 					if(idx>=0){
 						suffix=name.substring(idx).toLowerCase()
 					}
+                    let lowerName=name.toLowerCase()
                     if (['.txt', '.log', '.md',
                          '.bat', '.sh', '.cmd', '.vbs',
                          '.css', '.js', '.ts', '.sass', '.less',
@@ -1735,8 +1738,11 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
                          '.c', '.h', '.cpp', '.hpp', '.hxx',
                          '.java', '.py', '.go', '.pl', '.groovy', '.scala', '.kts',
                          '.gitignore', '.gitattributes',
-                         '.vue', '.lua', '.php'
-                    ].includes(suffix)) {
+                         '.vue', '.lua', '.php',
+                         '.repo','.dtd'
+                    ].includes(suffix)
+                    || ['dockerfile','hosts','license'
+                    ].includes(lowerName)) {
                         let idx = nextPath.indexOf('/download/')
                         if (idx >= 0) {
                             nextPath = nextPath.substring(idx)
@@ -1760,7 +1766,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 							playType='FLV'
 						}
 						nextPath = playPath.replaceAll('//', '/')+'?url='+encodeURIComponent(nextPath)+'&type='+playType + '&title=' + encodeURIComponent(name)
-					} else if (['.docx'].includes(suffix)) {
+					} else if (['.docx', '.doc'].includes(suffix)) {
                         let idx = nextPath.indexOf('/download/')
                         if (idx >= 0) {
                             nextPath = nextPath.substring(idx)
@@ -1768,7 +1774,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
                         nextPath = '../..' + nextPath
                         let readerPath = '/' + pathPublic + '/viewer/docx-viewer.html'
                         nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath) + '&title=' + encodeURIComponent(name)
-                    } else if (['.xlsx'].includes(suffix)) {
+                    } else if (['.xlsx', '.xls'].includes(suffix)) {
                         let idx = nextPath.indexOf('/download/')
                         if (idx >= 0) {
                             nextPath = nextPath.substring(idx)
@@ -1776,7 +1782,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
                         nextPath = '../..' + nextPath
                         let readerPath = '/' + pathPublic + '/viewer/xlsx-viewer.html'
                         nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath) + '&title=' + encodeURIComponent(name)
-                    } else if (['.pptx'].includes(suffix)) {
+                    } else if (['.pptx', '.ppt'].includes(suffix)) {
                         let idx = nextPath.indexOf('/download/')
                         if (idx >= 0) {
                             nextPath = nextPath.substring(idx)
@@ -1792,6 +1798,14 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
                         nextPath = '../..' + nextPath
                         let readerPath = '/' + pathPublic + '/viewer/pdf-viewer.html'
                         nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath) + '&title=' + encodeURIComponent(name)
+                    } else if (['.csv'].includes(suffix)) {
+                         let idx = nextPath.indexOf('/download/')
+                         if (idx >= 0) {
+                             nextPath = nextPath.substring(idx)
+                         }
+                         nextPath = '../..' + nextPath
+                         let readerPath = '/' + pathPublic + '/viewer/csv-viewer.html'
+                         nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath) + '&title=' + encodeURIComponent(name)
                     } else if (['.fbx', '.glb', '.gltf'].includes(suffix)) {
                         let idx = nextPath.indexOf('/download/')
                         if (idx >= 0) {
@@ -1804,6 +1818,14 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 							modelType='fbx'
 						}
                         nextPath = readerPath.replaceAll('//', '/') + '?modelUrl=' + encodeURIComponent(nextPath) + '&modelType=' + modelType + '&title=' + encodeURIComponent(name)
+                    } else if (['.hdr'].includes(suffix)) {
+                         let idx = nextPath.indexOf('/download/')
+                         if (idx >= 0) {
+                             nextPath = nextPath.substring(idx)
+                         }
+                         nextPath = '../..' + nextPath
+                         let readerPath = '/' + pathPublic + '/viewer/d3-viewer.html'
+                         nextPath = readerPath.replaceAll('//', '/') + '?hdrUrl=' + encodeURIComponent(nextPath) + '&title=' + encodeURIComponent(name)
                     }
 		
 					window.location.href = getBasePath() + nextPath
@@ -1967,6 +1989,8 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 		if !server.DisableDownload && strings.HasPrefix(urlPath, pathDownload) {
 			filePath := urlPath[len(pathDownload):]
 			LogInfo("goboot file-server, download path: %v", filePath)
+
+
 			fullPath := filepath.Join(rootPath, filePath)
 
 			// 检查文件是否在允许的目录内
@@ -1976,6 +2000,24 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 				c.JSON(500, ApiError(500, filePath+" not allow access!"))
 				return
 			}
+
+            // 获取是否强制下载
+            downloadType := c.Query("type")
+
+            // 尝试调用 libreoffice 将 doc/xls/ppt 转换为 docx/xlsx/pptx
+            if SliceContains([]string{
+                "inline", "preview", "view",
+            }, downloadType) {
+                suffix := strings.ToLower(filepath.Ext(filepath.Base(fullPath)))
+                if SliceContains([]string{
+                    ".doc", ".xls", ".ppt",
+                }, suffix){
+                    outpath,err := ConvertOfficeFile(fullPath)
+                    if err==nil {
+                        fullPath=outpath
+                    }
+                }
+            }
 
 			// 检查文件是否存在
 			info, err := os.Stat(fullPath)
@@ -1998,9 +2040,6 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 			}
 			defer file.Close()
 
-			// 获取是否强制下载
-			downloadType := c.Query("type")
-
 			// 获取文件扩展名和MIME类型
 			ext := strings.ToLower(filepath.Ext(fullPath))
 			mimeType := mime.TypeByExtension(ext)
@@ -2014,10 +2053,12 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 			}
 
 			// 不是内联模式，默认下载
-			if !SliceContains([]string{
+			if SliceContains([]string{
 				"inline", "preview", "view",
 			}, downloadType) {
-				c.Header("Content-Disposition", "attachment; filename=\""+info.Name()+"\"")
+				c.Header("Content-Disposition", "inline; filename=\""+url.PathEscape(info.Name())+"\"")
+			}else{
+			    c.Header("Content-Disposition", "attachment; filename=\""+url.PathEscape(info.Name())+"\"")
 			}
 
 			// 已知类型（图片、音视频等）由浏览器决定如何处理
@@ -2027,6 +2068,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 				"inline", "preview", "view",
 			}, downloadType) {
 				suffix := strings.ToLower(filepath.Ext(info.Name()))
+				lowerName := strings.ToLower(info.Name())
 				if SliceContains([]string{
 					".txt", ".log", ".md",
                     ".bat", ".sh", ".cmd", ".vbs",
@@ -2038,7 +2080,10 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
                     ".java", ".py", ".go", ".pl", ".groovy", ".scala", ".kts",
                     ".gitignore", ".gitattributes",
                     ".vue", ".lua", ".php",
-				}, suffix) {
+                    ".repo",".dtd",
+				}, suffix) || SliceContains([]string{
+				    "dockerfile","hosts","license",
+                    },lowerName){
 					c.Header("Content-Type", "text/plain")
 					c.Status(http.StatusOK)
 					c.Header("Content-Length", strconv.FormatInt(info.Size(), 10))
@@ -2121,6 +2166,96 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 
 	}
 }
+
+
+// FindLibreOfficePath 动态探测 LibreOffice 的路径
+func FindLibreOfficePath() string {
+	if runtime.GOOS == "windows" {
+		relativePath := `Program Files\LibreOffice\program\soffice.exe`
+		for _, drive := range []string{"C:\\", "D:\\", "E:\\", "F:\\", "G:\\"} {
+			fullPath := filepath.Join(drive, relativePath)
+			if _, err := os.Stat(fullPath); err == nil {
+				return fullPath
+			}
+		}
+		return "soffice.exe"
+	}
+	return "libreoffice"
+}
+
+
+// ConvertOfficeFile 跨平台兼容的 Office 旧版转新版函数
+// 支持 .doc -> .docx, .xls -> .xlsx, .ppt -> .pptx
+// 如果目标文件已存在，则跳过转换直接返回
+func ConvertOfficeFile(inputFilePath string) (outputPath string, err error) {
+    // 全局异常兜底，拦截所有 panic，将其转化为 error 返回
+	defer func() {
+		if r := recover(); r != nil {
+			// 将 panic 转化为 error 返回给调用方
+			outputPath = ""
+			err = fmt.Errorf("panic error occurred: %v", r)
+		}
+	}()
+
+	// 1. 解析输入文件信息
+	inputDir := filepath.Dir(inputFilePath)
+	inputBase := filepath.Base(inputFilePath)
+	ext := strings.ToLower(filepath.Ext(inputBase))
+
+	// 2. 根据扩展名确定目标格式
+	var targetFormat string
+	switch ext {
+	case ".doc":
+		targetFormat = "docx"
+	case ".xls":
+		targetFormat = "xlsx"
+	case ".ppt":
+		targetFormat = "pptx"
+	default:
+		return "", fmt.Errorf("un-support office input format: %s", ext)
+	}
+
+	// 3. 构建输出路径
+	outputDir := filepath.Join(inputDir, ".converted")
+	outputFileName := strings.TrimSuffix(inputBase, ext) + "." + targetFormat
+	finalOutputPath := filepath.Join(outputDir, outputFileName)
+
+	// 4. 如果输出文件已存在，直接返回，不再执行转换
+	if _, err := os.Stat(finalOutputPath); err == nil {
+		fmt.Printf("jump convert, output file already exists: %s\n", finalOutputPath)
+		return finalOutputPath, nil
+	}
+
+	// 5. 确保输出目录存在
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return "", fmt.Errorf("create output dir error: %v", err)
+	}
+
+	// 6. 获取 LibreOffice 路径并构建命令
+	loPath := FindLibreOfficePath()
+	cmd := exec.Command(loPath,
+		"--headless",
+		"--convert-to", targetFormat,
+		inputFilePath,
+		"--outdir", outputDir,
+	)
+
+	// 7. 执行命令并捕获输出
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+	    fmt.Printf("exec command is: %s\n", strings.Join(cmd.Args, " "))
+		return "", fmt.Errorf("LibreOffice convert failure: %v, error message is: %s", err, string(output))
+	}
+
+	// 8. 验证文件是否成功生成
+	if _, err := os.Stat(finalOutputPath); err != nil {
+		return "", fmt.Errorf("convert command exec success, buf not found output file: %s", finalOutputPath)
+	}
+
+	fmt.Printf("convert success, output file is: %s\n", finalOutputPath)
+	return finalOutputPath, nil
+}
+
 
 // 启动应用
 func (boot *GobootApplication) Run() {

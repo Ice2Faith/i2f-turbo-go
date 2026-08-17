@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- 移动端适配核心：控制视口宽度和缩放比例 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>csv-viewer</title>
+    <script src="../lib/vue/vue-2.js"></script>
+
+    <script src="../lib/moment/moment-2.24.0.js"></script>
+    <script src="../lib/element-ui/element-ui-2.15.10.js"></script>
+    <link rel="stylesheet" href="../lib/element-ui/element-ui-2.15.10.css"/>
+    <link rel="stylesheet" href="../lib/element-ui/element-ui-2.15.10-icon.css"/>
+
+    <script src="../lib/PapaParse/5.4.1/papaparse.min.js"></script>
+
+
+    <!-- 引入样式 -->
+    <link rel="stylesheet" href="../lib/vxe-pc-ui@3.1.27/lib/style.css">
+    <link rel="stylesheet" href="../lib/vxe-table@3.9.1/lib/style.css">
+    <!-- 引入组件 -->
+    <script src="../lib/xe-utils@4.0.12/lib/xe-utils.umd.min.js"></script>
+    <script src="../lib/vxe-pc-ui@3.1.27/lib/index.umd.min.js"></script>
+    <script src="../lib/vxe-table@3.9.1/lib/index.umd.min.js"></script>
+</head>
+<body>
+<div id="app">
+    <!-- show-overflow -->
+    <vxe-table
+            :style="'width: '+width+';height: '+height+'; overflow-y: auto; '"
+            :data="resultData.data"
+            border
+            stripe
+            :loading="loading"
+            show-overflow="ellipsis"
+            :column-config="{resizable: true, isCurrent: true, isHover: true}"
+            :row-config="{isCurrent: true, isHover: true}"
+            :tooltip-config="tooltipConfig"
+            :height="cssLengthToPx('calc('+height+' - 5px)')"
+            :scroll-y="{enabled: true}">
+        <!-- 序号列 -->
+        <vxe-column field="seq" type="seq" title="#" width="60" fixed="left"></vxe-column>
+        <!-- 动态遍历 CSV 的表头生成列 -->
+        <vxe-column
+                v-for="header in resultData.meta.fields"
+                :key="header"
+                :field="header"
+                :title="header"
+                sortable
+                min-width="80">
+        </vxe-column>
+        <template slot="empty">
+            <span style="color: red;">
+              <p>没有任何数据，请确认连接是否正确或文件格式是否正确！</p>
+            </span>
+        </template>
+    </vxe-table>
+
+</div>
+</body>
+<script>
+    // 全局配置
+
+    window.app = new Vue({
+        name: "CsvViewer",
+        data() {
+            return {
+                url: '',
+                // ///////////////////
+                loading: false,
+                resultData: {
+                    data: [],
+                    meta: {
+                        fields: []
+                    }
+                },
+                tooltipConfig : {
+                    showAll: true,
+                    enterable: true
+                },
+                width: '100%',
+                height: '100vh',
+            }
+        },
+        watch: {
+            url: {
+                immediate: true,
+                handler: function (val, old) {
+                    if (val) {
+                        this.renderCsv();
+                    }
+                }
+            }
+        },
+        computed: {},
+        mounted() {
+            this.resolveQueryParameters();
+        },
+        methods: {
+            resolveQueryParameters() {
+                let searchParams = new URL(window.location.href).searchParams
+                let title = searchParams.get('title');
+                if (title) {
+                    document.querySelector('head title').innerText = title;
+                }
+                this.url = searchParams.get('url');
+                this.width = searchParams.get('width') || this.width || '100%';
+                this.height = searchParams.get('height') || this.height || '100vh';
+            },
+            messageError(msg, limit) {
+                window._lastError = msg;
+                if (limit && limit >= 0) {
+                    if (msg && msg.length > limit) {
+                        msg = msg.substring(0, limit) + '...'
+                    }
+                }
+                this.$message.error(msg)
+            },
+            async renderCsv() {
+                this.previewCsvFromUrl(this.url)
+            },
+            async previewCsvFromUrl(url) {
+                this.loading=true
+                try {
+
+                    // 3. 使用 fetch 获取远程 CSV 文件的原始文本
+                    const response = await fetch(url);
+                    if (!response.ok) {
+                        throw new Error(`网络请求失败: ${response.status}`);
+                    }
+
+                    const csvText = await response.text();
+
+                    // 4. 使用 PapaParse 解析 CSV 文本
+                    let result = Papa.parse(csvText, {
+                        header: true,          // 将首行作为表头
+                        skipEmptyLines: true,  // 跳过空行
+                        dynamicTyping: true    // 自动转换数字和布尔值类型
+                    });
+
+                    this.resultData = result;
+                } catch (error) {
+                    console.error('Csv 文档预览失败:', error);
+                    this.messageError('Csv 文档预览失败')
+                }finally {
+                    this.loading=false;
+                }
+            },
+            /**
+             * 将任意合法的 CSS 长度字符串转换为像素值
+             * @param {string} lengthStr - 需要转换的长度字符串，如 '100vh', '50vw', 'calc(100vh - 20px)'
+             * @returns {number} 转换后的像素值
+             */
+            cssLengthToPx(lengthStr) {
+                // 1. 创建一个隐藏的测试元素
+                const testEl = document.createElement('div');
+
+                // 设置样式：绝对定位移出可视区，不可见，且不受父级布局影响
+                testEl.style.position = 'fixed';
+                testEl.style.visibility = 'hidden';
+                testEl.style.opacity=0;
+                testEl.style.left = '-9999px';
+                testEl.style.top = '-9999px';
+
+                // 2. 将传入的长度字符串赋值给 width 属性
+                testEl.style.width = lengthStr;
+
+                // 3. 将元素挂载到 DOM 树中（必须挂载才能触发浏览器的样式计算）
+                document.body.appendChild(testEl);
+
+                // 4. 读取浏览器计算后的实际像素宽度
+                const pxValue = testEl.offsetWidth;
+
+                // 5. 清理 DOM，移除测试元素
+                document.body.removeChild(testEl);
+
+                return pxValue;
+            }
+        }
+    })
+
+    window.app.$mount('#app');
+</script>
+<style>
+    * {
+        padding: 0;
+        margin: 0;
+        box-sizing: content-box;
+    }
+
+    /* 基础表格美化样式 */
+    .csv-table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-top: 10px;
+    }
+
+    .csv-table th, .csv-table td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
+        min-width: 80px;
+    }
+
+    .csv-table th {
+        background-color: #f2f2f2;
+        font-weight: bold;
+    }
+
+    .csv-table tr:nth-child(even) {
+        background-color: #f9f9f9;
+    }
+
+    .scroller {
+        height: calc(100vh - 200px);
+    }
+
+    @media (min-width: 320px) and (max-width: 719px) {
+        .xlsx-viewer-head {
+            zoom: 0.5;
+        }
+    }
+
+    @media (max-width: 320px) {
+        .xlsx-viewer-head {
+            zoom: 0.3;
+        }
+    }
+
+</style>
+</html>
