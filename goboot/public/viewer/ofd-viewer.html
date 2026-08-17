@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- 移动端适配核心：控制视口宽度和缩放比例 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ofd-viewer</title>
+    <script src="../lib/vue/vue-2.js"></script>
+
+    <script src="../lib/liteofd/index.js"></script>
+</head>
+<body>
+<div id="app">
+    <div id="ofd-container"
+         v-loading="loading"
+         :style="'width: '+width+';height: '+height+'; overflow-y: auto; '"></div>
+</div>
+</body>
+<script>
+    window.app = new Vue({
+        name: "OfdViewer",
+        data() {
+            return {
+                url: '',
+                width: '100%',
+                height: '100vh',
+                // /////////////////
+                loading: false,
+            }
+        },
+        watch: {
+            url:{
+                immediate: true,
+                handler:function(val,old){
+                    if(val){
+                        this.renderOfd();
+                    }
+                }
+            },
+        },
+        computed: {},
+        mounted() {
+            this.resolveQueryParameters();
+        },
+        methods: {
+            resolveQueryParameters() {
+                let searchParams = new URL(window.location.href).searchParams
+                let title=searchParams.get('title');
+                if(title){
+                    document.querySelector('head title').innerText=title;
+                }
+                this.url = searchParams.get('url');
+                this.width = searchParams.get('width') || this.width || '100%';
+                this.height = searchParams.get('height') || this.height || '100vh';
+            },
+            messageError(msg, limit) {
+                window._lastError = msg;
+                if (limit && limit >= 0) {
+                    if (msg && msg.length > limit) {
+                        msg = msg.substring(0, limit) + '...'
+                    }
+                }
+                this.$message.error(msg)
+            },
+            async renderOfd(){
+                this.previewOfdFromUrl(this.url,'ofd-container')
+            },
+            async previewOfdFromUrl(url, containerId) {
+                const container = document.getElementById(containerId);
+                if (!container) {
+                    return;
+                }
+
+                this.loading=true;
+                try {
+                    // 1. 使用 fetch 获取远程 URL 的文件流
+                    const response = await fetch(url);
+                    if (!response.ok) {
+                        throw new Error(`文件请求失败: HTTP ${response.status}`);
+                    }
+
+                    // 2. 将响应转换为 Blob 或 ArrayBuffer
+                    // 方式一：转换为 Blob
+                    const arrayBuffer = await response.arrayBuffer();
+
+                    const liteOfd = new liteofd.LiteOfd();
+                    await liteOfd.parse(arrayBuffer);
+
+                    // 3. 将所有页面渲染到 container 中进行显示
+                    // 页面渲染宽度与容器宽度（max-width:900px）保持一致
+                    let width=this.cssLengthToPx(this.width);
+                    liteOfd.minWidth = Math.min(960, width);
+                    liteOfd.maxWidth = Math.max(1280, width);
+                    // render() 返回包含所有页面的滚动容器，直接挂载即可
+                    const ofdDiv = liteOfd.render();
+                    container.appendChild(ofdDiv);
+
+                } catch (error) {
+                    console.error('Ofd 文档预览失败:', error);
+                    container.innerHTML = '<p style="color: red;">文档加载失败，请稍后重试。</p>';
+                }finally {
+                    this.loading=false;
+                }
+            },
+            /**
+             * 将任意合法的 CSS 长度字符串转换为像素值
+             * @param {string} lengthStr - 需要转换的长度字符串，如 '100vh', '50vw', 'calc(100vh - 20px)'
+             * @returns {number} 转换后的像素值
+             */
+            cssLengthToPx(lengthStr) {
+                // 1. 创建一个隐藏的测试元素
+                const testEl = document.createElement('div');
+
+                // 设置样式：绝对定位移出可视区，不可见，且不受父级布局影响
+                testEl.style.position = 'fixed';
+                testEl.style.visibility = 'hidden';
+                testEl.style.opacity=0;
+                testEl.style.left = '-9999px';
+                testEl.style.top = '-9999px';
+
+                // 2. 将传入的长度字符串赋值给 width 属性
+                testEl.style.width = lengthStr;
+
+                // 3. 将元素挂载到 DOM 树中（必须挂载才能触发浏览器的样式计算）
+                document.body.appendChild(testEl);
+
+                // 4. 读取浏览器计算后的实际像素宽度
+                const pxValue = testEl.offsetWidth;
+
+                // 5. 清理 DOM，移除测试元素
+                document.body.removeChild(testEl);
+
+                return pxValue;
+            }
+        }
+    })
+
+    window.app.$mount('#app');
+</script>
+<style>
+    * {
+        padding: 0;
+        margin: 0;
+        box-sizing: content-box;
+    }
+
+    /* liteofd 渲染根容器（源自 liteofd 官方 main.css 的 .pages-container 样式） */
+    #ofd-container .pages-container {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }
+
+    /* 每页纸张样式 */
+    #ofd-container .page-container {
+        margin: 15px auto;
+        background: #fff;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    /* 文本选择层：隐藏原始文本，仅用于选中/复制（源自 liteofd 官方 main.css 的 .textLayer 样式） */
+    #ofd-container .textLayer {
+        position: absolute;
+        text-align: initial;
+        inset: 0;
+        overflow: hidden;
+        opacity: 1;
+        line-height: 1;
+        text-size-adjust: none;
+        forced-color-adjust: none;
+        transform-origin: 0 0;
+    }
+    #ofd-container .textLayer :is(span, br, div) {
+        color: transparent;
+        white-space: pre;
+        cursor: text;
+        transform-origin: 0 0;
+    }
+    #ofd-container .textLayer::selection {
+        background: rgba(0 0 255 / 0.25);
+        color: transparent;
+    }
+
+    @media (min-width: 320px) and (max-width: 719px) {
+
+    }
+
+    @media (max-width: 320px) {
+
+    }
+
+</style>
+</html>

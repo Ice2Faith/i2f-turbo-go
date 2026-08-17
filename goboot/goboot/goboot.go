@@ -1798,6 +1798,14 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
                         nextPath = '../..' + nextPath
                         let readerPath = '/' + pathPublic + '/viewer/pdf-viewer.html'
                         nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath) + '&title=' + encodeURIComponent(name)
+                    } else if (['.pdf'].includes(suffix)) {
+                        let idx = nextPath.indexOf('/download/')
+                        if (idx >= 0) {
+                            nextPath = nextPath.substring(idx)
+                        }
+                        nextPath = '../..' + nextPath
+                        let readerPath = '/' + pathPublic + '/viewer/ofd-viewer.html'
+                        nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath) + '&title=' + encodeURIComponent(name)
                     } else if (['.csv'].includes(suffix)) {
                          let idx = nextPath.indexOf('/download/')
                          if (idx >= 0) {
