@@ -1766,7 +1766,9 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 							playType='FLV'
 						}
 						nextPath = playPath.replaceAll('//', '/')+'?url='+encodeURIComponent(nextPath)+'&type='+playType + '&title=' + encodeURIComponent(name)
-					} else if (['.docx', '.doc'].includes(suffix)) {
+					} else if (['.doc', '.dot', '.dotx', '.dotm', '.rtf',
+                                '.wps', '.wpt', '.odt', '.ott', '.fodt', '.epub'
+                               ].includes(suffix)) {
                         let idx = nextPath.indexOf('/download/')
                         if (idx >= 0) {
                             nextPath = nextPath.substring(idx)
@@ -1774,7 +1776,9 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
                         nextPath = '../..' + nextPath
                         let readerPath = '/' + pathPublic + '/viewer/docx-viewer.html'
                         nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath) + '&title=' + encodeURIComponent(name)
-                    } else if (['.xlsx', '.xls'].includes(suffix)) {
+                    } else if (['.xls', '.xlsm', '.xlt', '.xltm', '.tsv',
+                                '.ods', '.ots', '.et', '.ett'
+                               ].includes(suffix)) {
                         let idx = nextPath.indexOf('/download/')
                         if (idx >= 0) {
                             nextPath = nextPath.substring(idx)
@@ -1782,7 +1786,9 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
                         nextPath = '../..' + nextPath
                         let readerPath = '/' + pathPublic + '/viewer/xlsx-viewer.html'
                         nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath) + '&title=' + encodeURIComponent(name)
-                    } else if (['.pptx', '.ppt'].includes(suffix)) {
+                    } else if (['.ppt', '.pps', '.dps', '.odp',
+                                '.otp', '.ppsx'
+                                ].includes(suffix)) {
                         let idx = nextPath.indexOf('/download/')
                         if (idx >= 0) {
                             nextPath = nextPath.substring(idx)
@@ -1798,7 +1804,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
                         nextPath = '../..' + nextPath
                         let readerPath = '/' + pathPublic + '/viewer/pdf-viewer.html'
                         nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath) + '&title=' + encodeURIComponent(name)
-                    } else if (['.pdf'].includes(suffix)) {
+                    } else if (['.ofd'].includes(suffix)) {
                         let idx = nextPath.indexOf('/download/')
                         if (idx >= 0) {
                             nextPath = nextPath.substring(idx)
