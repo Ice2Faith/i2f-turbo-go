@@ -26,6 +26,7 @@ import (
 	"context"
 	"crypto/tls"
 	"database/sql"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -42,8 +43,8 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
-	"runtime"
 	"reflect"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -64,6 +65,9 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+//go:embed assets/*
+var assetsFiles embed.FS
 
 // /////////////////////////////////////////////////////////
 // goboot 默认配置区
@@ -1209,14 +1213,16 @@ func ProxyHandler(c *gin.Context, redirect string, proxyPath string) {
 
 // 文件服务配置
 type FileServer struct {
-	Enable          bool   `yaml:"enable"`
-	RootPath        string `yaml:"rootPath"` // 文件根路径
-	UrlPath         string `yaml:"urlPath"`
-	EmbedStaticFs   fs.FS
-	DisableUpload   bool `yaml:"disableUpload"`   // 是否禁止上传
-	DisableDownload bool `yaml:"disableDownload"` // 是否禁止下载
-	DisableList     bool `yaml:"disableList"`     // 是否禁止举出文件
-	DisableBrowser  bool `yaml:"disableBrowser"`  // 是否禁止浏览文件
+	Enable           bool   `yaml:"enable"`
+	RootPath         string `yaml:"rootPath"` // 文件根路径
+	UrlPath          string `yaml:"urlPath"`
+	EmbedStaticFs    fs.FS
+	DisableUpload    bool `yaml:"disableUpload"`    // 是否禁止上传
+	DisableDownload  bool `yaml:"disableDownload"`  // 是否禁止下载
+	DisableList      bool `yaml:"disableList"`      // 是否禁止举出文件
+	DisableBrowser   bool `yaml:"disableBrowser"`   // 是否禁止浏览文件
+	DisableOffice    bool `yaml:"disableOffice"`    // 是否禁止Office文档进行自动格式转移以进行预览
+	DisableOfficeCom bool `yaml:"disableOfficeCom"` // 是否禁止Office文档转换时使用windows下的COM组件进行转换
 }
 
 type FileInfoItem struct {
@@ -1267,13 +1273,13 @@ func ConvertAsHumanSizeText(size int64) string {
 
 // isDirOrSymlinkToDir 判断路径是否为真实目录，或是指向目录的符号链接
 func isDirOrSymlinkToDir(path string) bool {
-    // os.Stat 会自动跟随符号链接，获取最终目标的属性
-    info, err := os.Stat(path)
-    if err != nil {
-        // 如果目标不存在、权限不足或发生其他错误，视为非目录
-        return false
-    }
-    return info.IsDir()
+	// os.Stat 会自动跟随符号链接，获取最终目标的属性
+	info, err := os.Stat(path)
+	if err != nil {
+		// 如果目标不存在、权限不足或发生其他错误，视为非目录
+		return false
+	}
+	return info.IsDir()
 }
 
 func ListFiles(fullPath string, rootPath string) ([]FileInfoItem, error) {
@@ -1409,12 +1415,12 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 				c.JSON(500, ApiError(500, filePath+" list error!"))
 				return
 			}
-			
+
 			// 获取是否随机排序
 			sortRandom := c.Query("sort_random")
 
 			requireSortRandom := sortRandom == "1" || sortRandom == "true"
-			
+
 			if requireSortRandom {
 				// 1. 先对整个列表进行随机打乱
 				rand.Shuffle(len(files), func(i, j int) {
@@ -1426,7 +1432,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 					return files[i].IsDir && !files[j].IsDir
 				})
 			}
-			
+
 			if info != nil {
 				parentDir := filepath.Dir(fullPath)
 				relPath, _ := filepath.Rel(rootPath, parentDir)
@@ -1589,15 +1595,15 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
             <div class="file-path">
             	<span class="file-sort-random" onclick="onToggleSortRandom()">`
 			if requireSortRandom {
-				html=html + "random"
+				html = html + "random"
 			} else {
-				html= html + "sorted"
+				html = html + "sorted"
 			}
 			/*language=html*/
-			html=html + `</span>`
+			html = html + `</span>`
 
 			/*language=html*/
-			html = html + `<span class="file-path-name">` +regularFilePath + `</span>`
+			html = html + `<span class="file-path-name">` + regularFilePath + `</span>`
 
 			if !server.DisableUpload {
 				/*language=html*/
@@ -1617,7 +1623,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
     </body>
     <script>`
 
-			html= html + `
+			html = html + `
         const pathBase = "`
 			html = html + pathBase
 			html = html + `"
@@ -1766,9 +1772,18 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 							playType='FLV'
 						}
 						nextPath = playPath.replaceAll('//', '/')+'?url='+encodeURIComponent(nextPath)+'&type='+playType + '&title=' + encodeURIComponent(name)
-					} else if (['.doc', '.dot', '.dotx', '.dotm', '.rtf',
-                                '.wps', '.wpt', '.odt', '.ott', '.fodt', '.epub'
-                               ].includes(suffix)) {
+					} else if ([ '.docx'].includes(suffix)`
+
+				if !server.DisableOffice {
+					/*language=javascript*/
+					html = html + `
+                                    || ['.doc', '.dot', '.dotx', '.dotm', '.rtf',
+                                    '.wps', '.wpt', '.odt', '.ott', '.fodt', '.epub'
+                                   ].includes(suffix)`
+				}
+
+				/*language=javascript*/
+				html = html + `) {
                         let idx = nextPath.indexOf('/download/')
                         if (idx >= 0) {
                             nextPath = nextPath.substring(idx)
@@ -1776,9 +1791,18 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
                         nextPath = '../..' + nextPath
                         let readerPath = '/' + pathPublic + '/viewer/docx-viewer.html'
                         nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath) + '&title=' + encodeURIComponent(name)
-                    } else if (['.xls', '.xlsm', '.xlt', '.xltm', '.tsv',
-                                '.ods', '.ots', '.et', '.ett'
-                               ].includes(suffix)) {
+                    } else if ([ '.xlsx'].includes(suffix) `
+
+				if !server.DisableOffice {
+					/*language=javascript*/
+					html = html + `
+                                    || ['.xls', '.xlsm', '.xlt', '.xltm', '.tsv',
+                                    '.ods', '.ots', '.et', '.ett'
+                                   ].includes(suffix)`
+				}
+
+				/*language=javascript*/
+				html = html + `) {
                         let idx = nextPath.indexOf('/download/')
                         if (idx >= 0) {
                             nextPath = nextPath.substring(idx)
@@ -1786,9 +1810,18 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
                         nextPath = '../..' + nextPath
                         let readerPath = '/' + pathPublic + '/viewer/xlsx-viewer.html'
                         nextPath = readerPath.replaceAll('//', '/') + '?url=' + encodeURIComponent(nextPath) + '&title=' + encodeURIComponent(name)
-                    } else if (['.ppt', '.pps', '.dps', '.odp',
-                                '.otp', '.ppsx'
-                                ].includes(suffix)) {
+                    } else if ([ '.pptx'].includes(suffix)`
+
+				if !server.DisableOffice {
+					/*language=javascript*/
+					html = html + `
+                                    || ['.ppt', '.pps', '.dps', '.odp',
+                                    '.otp', '.ppsx'
+                                    ].includes(suffix)`
+				}
+
+				/*language=javascript*/
+				html = html + `) {
                         let idx = nextPath.indexOf('/download/')
                         if (idx >= 0) {
                             nextPath = nextPath.substring(idx)
@@ -2004,7 +2037,6 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 			filePath := urlPath[len(pathDownload):]
 			LogInfo("goboot file-server, download path: %v", filePath)
 
-
 			fullPath := filepath.Join(rootPath, filePath)
 
 			// 检查文件是否在允许的目录内
@@ -2015,29 +2047,31 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 				return
 			}
 
-            // 获取是否强制下载
-            downloadType := c.Query("type")
+			// 获取是否强制下载
+			downloadType := c.Query("type")
 
-            // 尝试调用 libreoffice 将 doc/xls/ppt 转换为 docx/xlsx/pptx
-            if SliceContains([]string{
-                "inline", "preview", "view",
-            }, downloadType) {
-                suffix := strings.ToLower(filepath.Ext(filepath.Base(fullPath)))
-                if SliceContains([]string{
-					".doc", ".dot", ".dotx", ".dotm", ".rtf",
-					".wps", ".wpt", ".odt", ".ott", ".fodt", ".epub",
-				}, suffix) || SliceContains([]string{
-					".xls", ".xlsm", ".xlt", ".xltm", ".tsv",
-					".ods", ".ots", ".et", ".ett",
-				}, suffix) || SliceContains([]string{
-					".ppt", ".pps", ".dps", ".odp", ".otp", ".ppsx",
-				}, suffix){
-                    outpath,err := ConvertOfficeFile(fullPath)
-                    if err==nil {
-                        fullPath=outpath
-                    }
-                }
-            }
+			if !server.DisableOffice {
+				// 尝试调用 libreoffice 将 doc/xls/ppt 转换为 docx/xlsx/pptx
+				if SliceContains([]string{
+					"inline", "preview", "view",
+				}, downloadType) {
+					suffix := strings.ToLower(filepath.Ext(filepath.Base(fullPath)))
+					if SliceContains([]string{
+						".doc", ".dot", ".dotx", ".dotm", ".rtf",
+						".wps", ".wpt", ".odt", ".ott", ".fodt", ".epub",
+					}, suffix) || SliceContains([]string{
+						".xls", ".xlsm", ".xlt", ".xltm", ".tsv",
+						".ods", ".ots", ".et", ".ett",
+					}, suffix) || SliceContains([]string{
+						".ppt", ".pps", ".dps", ".odp", ".otp", ".ppsx",
+					}, suffix) {
+						outpath, err := ConvertOfficeFile(fullPath, server.DisableOfficeCom)
+						if err == nil {
+							fullPath = outpath
+						}
+					}
+				}
+			}
 
 			// 检查文件是否存在
 			info, err := os.Stat(fullPath)
@@ -2077,8 +2111,8 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 				"inline", "preview", "view",
 			}, downloadType) {
 				c.Header("Content-Disposition", "inline; filename=\""+url.PathEscape(info.Name())+"\"")
-			}else{
-			    c.Header("Content-Disposition", "attachment; filename=\""+url.PathEscape(info.Name())+"\"")
+			} else {
+				c.Header("Content-Disposition", "attachment; filename=\""+url.PathEscape(info.Name())+"\"")
 			}
 
 			// 已知类型（图片、音视频等）由浏览器决定如何处理
@@ -2091,19 +2125,19 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 				lowerName := strings.ToLower(info.Name())
 				if SliceContains([]string{
 					".txt", ".log", ".md",
-                    ".bat", ".sh", ".cmd", ".vbs",
-                    ".css", ".js", ".ts", ".sass", ".less",
-                    ".yml", ".yaml", ".properties", ".conf", ".ini", ".cfg", ".reg",
-                    ".xml", ".json", ".jsonl", ".jsonc",
-                    ".sql",
-                    ".c", ".h", ".cpp", ".hpp", ".hxx",
-                    ".java", ".py", ".go", ".pl", ".groovy", ".scala", ".kts",
-                    ".gitignore", ".gitattributes",
-                    ".vue", ".lua", ".php",
-                    ".repo",".dtd",".ps1",
+					".bat", ".sh", ".cmd", ".vbs",
+					".css", ".js", ".ts", ".sass", ".less",
+					".yml", ".yaml", ".properties", ".conf", ".ini", ".cfg", ".reg",
+					".xml", ".json", ".jsonl", ".jsonc",
+					".sql",
+					".c", ".h", ".cpp", ".hpp", ".hxx",
+					".java", ".py", ".go", ".pl", ".groovy", ".scala", ".kts",
+					".gitignore", ".gitattributes",
+					".vue", ".lua", ".php",
+					".repo", ".dtd", ".ps1",
 				}, suffix) || SliceContains([]string{
-				    "dockerfile","hosts","license",
-                    },lowerName){
+					"dockerfile", "hosts", "license",
+				}, lowerName) {
 					c.Header("Content-Type", "text/plain")
 					c.Status(http.StatusOK)
 					c.Header("Content-Length", strconv.FormatInt(info.Size(), 10))
@@ -2187,28 +2221,228 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 	}
 }
 
+var cacheLibreOfficePath string
 
 // FindLibreOfficePath 动态探测 LibreOffice 的路径
 func FindLibreOfficePath() string {
-	if runtime.GOOS == "windows" {
-		relativePath := `Program Files\LibreOffice\program\soffice.exe`
-		for _, drive := range []string{"C:\\", "D:\\", "E:\\", "F:\\", "G:\\"} {
+	if cacheLibreOfficePath != "" {
+		return cacheLibreOfficePath
+	}
+	cacheLibreOfficePath = FindLibreOfficePath0()
+	return cacheLibreOfficePath
+}
+
+func FindLibreOfficePath0() string {
+	// 允许用户通过环境变量指定路径
+	if envPath := os.Getenv("LIBREOFFICE_PATH"); envPath != "" {
+		fullPath := filepath.Join(envPath, "soffice.exe")
+		if _, err := os.Stat(fullPath); err == nil {
+			return fullPath
+		}
+		fullPath = filepath.Join(envPath, "program", "soffice.exe")
+		if _, err := os.Stat(fullPath); err == nil {
+			return fullPath
+		}
+	}
+
+	if runtime.GOOS != "windows" {
+		return "libreoffice"
+	}
+
+	// 尝试从注册表读取
+	if path := getLibreOfficePathFromRegistry(); path != "" {
+		return path
+	}
+
+	// 降级方案：遍历盘符
+	commonPaths := []string{
+		`Program Files\LibreOffice\program\soffice.exe`,
+		`Program Files (x86)\LibreOffice\program\soffice.exe`,
+		`Program Files\LibreOffice\soffice.exe`,
+		`Program Files (x86)\LibreOffice\soffice.exe`,
+	}
+
+	for _, drive := range []string{"C:\\", "D:\\", "E:\\", "F:\\", "G:\\"} {
+		for _, relativePath := range commonPaths {
 			fullPath := filepath.Join(drive, relativePath)
 			if _, err := os.Stat(fullPath); err == nil {
 				return fullPath
 			}
 		}
-		return "soffice.exe"
 	}
-	return "libreoffice"
+
+	return "soffice.exe"
 }
 
+func getLibreOfficePathFromRegistry() string {
+	// 尝试 HKLM
+	keys := []string{
+		`HKEY_LOCAL_MACHINE\SOFTWARE\LibreOffice\UNO\InstallPath`,
+		`HKEY_CURRENT_USER\SOFTWARE\LibreOffice\UNO\InstallPath`,
+	}
+
+	for _, key := range keys {
+		cmd := exec.Command("reg", "query", key, "/ve")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			continue
+		}
+
+		// 解析输出
+		if path := parseRegistryOutput(string(output)); path != "" {
+			// 注册表存储的是安装根目录，需要拼接 \soffice.exe
+			fullPath := filepath.Join(path, "soffice.exe")
+			if _, err := os.Stat(fullPath); err == nil {
+				return fullPath
+			}
+			fullPath = filepath.Join(path, "program", "soffice.exe")
+			if _, err := os.Stat(fullPath); err == nil {
+				return fullPath
+			}
+		}
+	}
+
+	return ""
+}
+
+func parseRegistryOutput(output string) string {
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		// 匹配类似："(默认)    REG_SZ    D:\Program Files\LibreOffice\program"
+		if strings.Contains(line, "REG_SZ") {
+			// 提取路径部分（最后一个字段）
+			parts := strings.Split(line, "REG_SZ")
+			if len(parts) >= 2 {
+				path := strings.TrimSpace(parts[1])
+				if path != "" {
+					return path
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// 提取单个文件
+func ExtractAssetFile(embedPath, localPath string) error {
+	// 确保目标目录存在
+	if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
+		return fmt.Errorf("create dir error: %w", err)
+	}
+
+	// 打开嵌入文件
+	src, err := assetsFiles.Open(embedPath)
+	if err != nil {
+		return fmt.Errorf("open embed file %s error: %w", embedPath, err)
+	}
+	defer src.Close()
+
+	// 创建本地文件
+	dst, err := os.Create(localPath)
+	if err != nil {
+		return fmt.Errorf("create local file %s error: %w", localPath, err)
+	}
+	defer dst.Close()
+
+	// 复制内容
+	_, err = io.Copy(dst, src)
+	if err != nil {
+		return fmt.Errorf("write file %s error: %w", localPath, err)
+	}
+
+	return nil
+}
+
+func ConvertOfficeFileByWindowsOfficeCom(inputFilePath string, outputFilePath string, targetFormat string) (outputPath string, err error) {
+	// 全局异常兜底，拦截所有 panic，将其转化为 error 返回
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("convert error: %v\n", r)
+			// 将 panic 转化为 error 返回给调用方
+			outputPath = ""
+			err = fmt.Errorf("panic error occurred: %v", r)
+		}
+	}()
+
+	srcScriptPath := "assets/script/office_to_" + targetFormat + ".vbs"
+	dstScriptPath := ".\\assets\\script\\office_to_" + targetFormat + ".vbs"
+	if _, err := os.Stat(dstScriptPath); err != nil {
+		ExtractAssetFile(srcScriptPath, dstScriptPath)
+	}
+
+	if _, err := os.Stat(dstScriptPath); err != nil {
+		return "", fmt.Errorf("release asset script file error: %v", err)
+	}
+
+	absInputPath, _ := filepath.Abs(inputFilePath)
+	absOutputPath, _ := filepath.Abs(outputFilePath)
+
+	cmd := exec.Command("cscript", dstScriptPath,
+		absInputPath,
+		absOutputPath,
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Printf("exec command is: %s\n", strings.Join(cmd.Args, " "))
+		return "", fmt.Errorf("office com script convert failure: %v, error message is: %s", err, string(output))
+	}
+
+	if _, err := os.Stat(outputFilePath); err != nil {
+		return "", fmt.Errorf("office com script command exec success, but not found output file: %s", outputFilePath)
+	}
+
+	return outputFilePath, nil
+}
+
+func ConvertOfficeFileByWindowsWpsCom(inputFilePath string, outputFilePath string, targetFormat string) (outputPath string, err error) {
+	// 全局异常兜底，拦截所有 panic，将其转化为 error 返回
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("convert error: %v\n", r)
+			// 将 panic 转化为 error 返回给调用方
+			outputPath = ""
+			err = fmt.Errorf("panic error occurred: %v", r)
+		}
+	}()
+
+	srcScriptPath := "assets/script/wps_to_" + targetFormat + ".vbs"
+	dstScriptPath := ".\\assets\\script\\wps_to_" + targetFormat + ".vbs"
+	if _, err := os.Stat(dstScriptPath); err != nil {
+		ExtractAssetFile(srcScriptPath, dstScriptPath)
+	}
+
+	if _, err := os.Stat(dstScriptPath); err != nil {
+		return "", fmt.Errorf("release asset script file error: %v", err)
+	}
+
+	absInputPath, _ := filepath.Abs(inputFilePath)
+	absOutputPath, _ := filepath.Abs(outputFilePath)
+
+	cmd := exec.Command("cscript", dstScriptPath,
+		absInputPath,
+		absOutputPath,
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Printf("exec command is: %s\n", strings.Join(cmd.Args, " "))
+		return "", fmt.Errorf("wps com script convert failure: %v, error message is: %s", err, string(output))
+	}
+
+	if _, err := os.Stat(outputFilePath); err != nil {
+		return "", fmt.Errorf("wps com script command exec success, but not found output file: %s", outputFilePath)
+	}
+
+	return outputFilePath, nil
+}
 
 // ConvertOfficeFile 跨平台兼容的 Office 旧版转新版函数
 // 支持 .doc -> .docx, .xls -> .xlsx, .ppt -> .pptx
 // 如果目标文件已存在，则跳过转换直接返回
-func ConvertOfficeFile(inputFilePath string) (outputPath string, err error) {
-    // 全局异常兜底，拦截所有 panic，将其转化为 error 返回
+func ConvertOfficeFile(inputFilePath string, disableOfficeCom bool) (outputPath string, err error) {
+	// 全局异常兜底，拦截所有 panic，将其转化为 error 返回
 	defer func() {
 		if r := recover(); r != nil {
 			// 将 panic 转化为 error 返回给调用方
@@ -2258,31 +2492,50 @@ func ConvertOfficeFile(inputFilePath string) (outputPath string, err error) {
 		return "", fmt.Errorf("create output dir error: %v", err)
 	}
 
-	// 6. 获取 LibreOffice 路径并构建命令
-	loPath := FindLibreOfficePath()
-	cmd := exec.Command(loPath,
-		"--headless",
-		"--convert-to", targetFormat,
-		inputFilePath,
-		"--outdir", outputDir,
-	)
+	// windows 下，可以使用 COM 组件，调用用户自己安装的 office/wps 完成格式转换
+	if runtime.GOOS == "windows" {
+		if !disableOfficeCom {
+			// 尝试使用 office
+			if _, err := os.Stat(finalOutputPath); err != nil {
+				fmt.Printf("try convert by windows office com: %s\n", inputFilePath)
+				ConvertOfficeFileByWindowsOfficeCom(inputFilePath, finalOutputPath, targetFormat)
+			}
+			// 尝试使用 wps
+			if _, err := os.Stat(finalOutputPath); err != nil {
+				fmt.Printf("try convert by windows wps com: %s\n", inputFilePath)
+				ConvertOfficeFileByWindowsWpsCom(inputFilePath, finalOutputPath, targetFormat)
+			}
+		}
+	}
 
-	// 7. 执行命令并捕获输出
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-	    fmt.Printf("exec command is: %s\n", strings.Join(cmd.Args, " "))
-		return "", fmt.Errorf("LibreOffice convert failure: %v, error message is: %s", err, string(output))
+	// 使用 libreoffice 进行转换
+	if _, err := os.Stat(finalOutputPath); err != nil {
+		fmt.Printf("try convert by libreoffice: %s\n", inputFilePath)
+		// 6. 获取 LibreOffice 路径并构建命令
+		loPath := FindLibreOfficePath()
+		cmd := exec.Command(loPath,
+			"--headless",
+			"--convert-to", targetFormat,
+			inputFilePath,
+			"--outdir", outputDir,
+		)
+
+		// 7. 执行命令并捕获输出
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			fmt.Printf("exec command is: %s\n", strings.Join(cmd.Args, " "))
+			return "", fmt.Errorf("LibreOffice convert failure: %v, error message is: %s", err, string(output))
+		}
 	}
 
 	// 8. 验证文件是否成功生成
 	if _, err := os.Stat(finalOutputPath); err != nil {
-		return "", fmt.Errorf("convert command exec success, buf not found output file: %s", finalOutputPath)
+		return "", fmt.Errorf("convert command exec success, but not found output file: %s", finalOutputPath)
 	}
 
 	fmt.Printf("convert success, output file is: %s\n", finalOutputPath)
 	return finalOutputPath, nil
 }
-
 
 // 启动应用
 func (boot *GobootApplication) Run() {

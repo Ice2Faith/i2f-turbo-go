@@ -82,6 +82,8 @@ goboot:
       disableDownload: false
       disableList: false
       disableBrowser: false
+      disableOffice: false
+      disableOfficeCom: false
     cors:
       enable: true
       allowAllOrigins: true
