@@ -1377,12 +1377,22 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 		// 检查路径前缀匹配
 		urlPath := c.Request.URL.Path
 		if server.EmbedStaticFs != nil && strings.HasPrefix(urlPath, pathPublic) {
+			// 设置缓存1天
+			c.Header("Cache-Control", "public, max-age=86400")
+			c.Header("Expires", time.Now().Add(24*time.Hour).Format(http.TimeFormat))
+
 			filePath := urlPath[len(pathPublic):]
 			httpFS := http.FS(server.EmbedStaticFs)
+
 			c.FileFromFS(filePath, httpFS)
 			return
 		}
 		if !server.DisableBrowser && strings.HasPrefix(urlPath, pathBrowser) {
+			// 禁用缓存
+			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+			c.Header("Pragma", "no-cache")
+			c.Header("Expires", "0")
+
 			filePath := urlPath[len(pathBrowser):]
 			LogInfo("goboot file-server, browser path: %v", filePath)
 			fullPath := filepath.Join(rootPath, filePath)
@@ -1963,6 +1973,11 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 			return
 		}
 		if !server.DisableList && strings.HasPrefix(urlPath, pathList) {
+			// 禁用缓存
+			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+			c.Header("Pragma", "no-cache")
+			c.Header("Expires", "0")
+
 			filePath := urlPath[len(pathList):]
 			LogInfo("goboot file-server, list path: %v", filePath)
 			fullPath := filepath.Join(rootPath, filePath)
@@ -2034,6 +2049,11 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 			return
 		}
 		if !server.DisableDownload && strings.HasPrefix(urlPath, pathDownload) {
+			// 禁用缓存
+			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+			c.Header("Pragma", "no-cache")
+			c.Header("Expires", "0")
+
 			filePath := urlPath[len(pathDownload):]
 			LogInfo("goboot file-server, download path: %v", filePath)
 
