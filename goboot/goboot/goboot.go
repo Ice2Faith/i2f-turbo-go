@@ -2537,6 +2537,155 @@ func ConvertOfficeFile(inputFilePath string, disableOfficeCom bool) (outputPath 
 	return finalOutputPath, nil
 }
 
+// 常见虚拟网卡前缀，可根据实际环境扩展
+var virtualNames = []string{
+	"docker", "cni", "cali", "flannel", "weave", "podman", "kube-ipvs", "cilium",
+	"virbr", "vnet", "vboxnet", "vmnet", "vmx", "vmware", "vethernet", "xenbr", "vif",
+	"dummy",
+	"macvlan", "ipvlan",
+}
+
+// 这里是容易误报或者是VPN类型的
+var virtualWeakNames = []string{
+	// 原有
+	"br-", "vwnet",
+	"tun", "tap", "utun", "wg",
+
+	// 新增补充
+	"zt", "tailscale", "ts", "openvpn", "ovpn", "ipsec",
+	"bond", "team",
+	"vxlan", "geneve", "gre", "gretap", "ipip", "sit", "erspan",
+}
+
+// IsVirtualInterface 判断是否为虚拟网卡
+func IsVirtualInterface(name string) bool {
+	lower := strings.ToLower(name)
+	for _, kw := range virtualNames {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsVirtualWeakInterface 判断是否为弱虚拟网卡
+func IsVirtualWeakInterface(name string) bool {
+	lower := strings.ToLower(name)
+	for _, kw := range virtualWeakNames {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// IpEntry 表示一个网卡的IP信息
+type IpEntry struct {
+	Interface     string // 网卡名称
+	IP            string // IPv4地址
+	IsVirtual     bool   // 是否为虚拟网卡
+	IsWeakVirtual bool   // 是否为弱虚拟网卡
+}
+
+// GetAllIpList 获取所有 up 状态、非loopback网卡的IPv4地址（包含虚拟网卡），
+// 返回按 [非虚拟 → 虚拟] 排序的切片，同组内按网卡名排序。
+func GetAllIpList() (ret []IpEntry) {
+	defer func() {
+		if r := recover(); r != nil {
+			// panic 发生后，尝试从 GetAllIpList 获取第一个 IP 作为兜底
+			var entries []IpEntry
+			ret = entries
+		}
+	}()
+
+	var entries []IpEntry
+
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		fmt.Println("获取网卡列表失败:", err)
+		return entries
+	}
+
+	for _, iface := range ifaces {
+		// 过滤：非 up 或 loopback 跳过
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		virtual := IsVirtualInterface(iface.Name)
+		weakVirtual := IsVirtualWeakInterface(iface.Name)
+
+		for _, addr := range addrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ip := ipNet.IP.To4()
+			if ip != nil && !ip.IsLoopback() && !ip.IsUnspecified() {
+				entries = append(entries, IpEntry{
+					Interface:     iface.Name,
+					IP:            ip.String(),
+					IsVirtual:     virtual,
+					IsWeakVirtual: weakVirtual,
+				})
+			}
+		}
+	}
+
+	// 排序：非虚拟在前，弱虚拟在中，虚拟在后；同组内按网卡名排序（保持输出稳定）
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].IsVirtual != entries[j].IsVirtual {
+			return !entries[i].IsVirtual // false（非虚拟）排在 true（虚拟）之前
+		}
+		if entries[i].IsWeakVirtual != entries[j].IsWeakVirtual {
+			return entries[i].IsWeakVirtual // false（非弱虚拟）排在 true（弱虚拟）之后
+		}
+		return entries[i].Interface < entries[j].Interface
+	})
+
+	return entries
+}
+
+// GetPreferredIp 获取系统当前正在使用的出口 IP（最可靠）
+func GetPreferredIp() (ip string) {
+	defer func() {
+		if r := recover(); r != nil {
+			// panic 发生后，尝试从 GetAllIpList 获取第一个 IP 作为兜底
+			entries := GetAllIpList()
+			if len(entries) > 0 {
+				ip = entries[0].IP
+			} else {
+				ip = ""
+			}
+		}
+	}()
+
+	// 用带超时的 dialer，避免离线环境卡住
+	dialer := net.Dialer{Timeout: 2 * time.Second}
+	conn, err := dialer.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	if ip := localAddr.IP.To4(); ip != nil {
+		return ip.String()
+	}
+
+	// 降级方案：取 GetAllIpList 排序后的第一个 IP
+	entries := GetAllIpList()
+	if len(entries) > 0 {
+		return entries[0].IP
+	}
+	return ""
+}
+
 // 启动应用
 func (boot *GobootApplication) Run() {
 	engine := boot.App
@@ -2578,28 +2727,15 @@ func (boot *GobootApplication) Run() {
 	LogInfo("app [%v] on [%v] run at port [%v]", app.Name, profiles.Active, server.Port)
 	LogInfo("local: http://localhost:%v/", server.Port)
 
-	iters, err := net.Interfaces()
-	if err == nil {
-		for _, iter := range iters {
-			if (net.FlagUp & iter.Flags) != 0 {
-				continue
-			}
-			if (net.FlagLoopback & iter.Flags) != 0 {
-				continue
-			}
-			addrs, err2 := iter.Addrs()
-			if err2 == nil {
-				LogInfo("[net] %v :", iter.Name)
-				for _, addr := range addrs {
-					ipNet, ok := addr.(*net.IPNet)
+	preferredIp := GetPreferredIp()
+	if preferredIp != "" {
+		LogInfo("prefer: http://%v:%v/", preferredIp, server.Port)
+	}
 
-					if ok && !ipNet.IP.IsLoopback() && !ipNet.IP.IsMulticast() {
-						LogInfo("\thttp://%v:%v/", ipNet.IP, server.Port)
-					}
-				}
-			}
-		}
-
+	allIPs := GetAllIpList()
+	for _, entry := range allIPs {
+		LogInfo("[net] %v :", entry.Interface)
+		LogInfo("\thttp://%v:%v/", entry.IP, server.Port)
 	}
 
 	LogInfo("goboot before run.")
