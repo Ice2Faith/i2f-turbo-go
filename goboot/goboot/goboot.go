@@ -60,6 +60,7 @@ import (
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 	goredis "github.com/redis/go-redis/v9"
+	"gopkg.in/yaml.v3"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
