@@ -60,7 +60,6 @@ import (
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 	goredis "github.com/redis/go-redis/v9"
-	"gopkg.in/yaml.v3"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -1377,11 +1376,18 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 		// 检查路径前缀匹配
 		urlPath := c.Request.URL.Path
 		if server.EmbedStaticFs != nil && strings.HasPrefix(urlPath, pathPublic) {
-			// 设置缓存1天
-			c.Header("Cache-Control", "public, max-age=86400")
-			c.Header("Expires", time.Now().Add(24*time.Hour).Format(http.TimeFormat))
-
 			filePath := urlPath[len(pathPublic):]
+
+			if strings.Contains(filePath, "/lib/") || strings.Contains(filePath, "/libs/") {
+				// 设置缓存7天
+				c.Header("Cache-Control", "public, max-age=604800")
+				c.Header("Expires", time.Now().Add(7*24*time.Hour).Format(http.TimeFormat))
+			} else {
+				// 设置缓存1天
+				c.Header("Cache-Control", "public, max-age=86400")
+				c.Header("Expires", time.Now().Add(24*time.Hour).Format(http.TimeFormat))
+			}
+
 			httpFS := http.FS(server.EmbedStaticFs)
 
 			c.FileFromFS(filePath, httpFS)
