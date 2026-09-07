@@ -167,6 +167,16 @@ goboot:
       enable: false
       items:
         - /api/
+    fileServer:
+      enable: false
+      rootPath: ./file-server
+      urlPath: /file-server
+      disableUpload: true
+      disableDownload: false
+      disableList: false
+      disableBrowser: false
+      disableOffice: false
+      disableOfficeCom: false
     cors:
       enable: true
       allowAllOrigins: true
@@ -352,6 +362,26 @@ goboot:
       # 可以配置多个进行按照匹配规则自动路由  
       items:
         - /api/
+    # 文件服务器配置
+    fileServer:
+      # 是否启用文件服务器
+      enable: false
+      # 文件存储的本地根目录
+      rootPath: ./file-server
+      # 文件服务的URL路径前缀
+      urlPath: /file-server
+      # 是否禁止上传功能
+      disableUpload: true
+      # 是否禁止下载功能
+      disableDownload: false
+      # 是否禁止列出文件列表API
+      disableList: false
+      # 是否禁止网页浏览功能
+      disableBrowser: false
+      # 是否禁止Office旧格式自动转换预览
+      disableOffice: false
+      # 是否禁止使用Windows COM组件进行Office转换
+      disableOfficeCom: false
     # 跨域配置
     cors:
       # 是否启用
@@ -696,6 +726,132 @@ func (api *Api) Login(resp *goboot.CtxResp,user * User) *goboot.CtxResp {
 - 函数：HandleMappingMethodArg 负责实现参数类型的实际参数的自动绑定
     - 是为 MappingHandler 实现自动注入函数调用入参的核心函数调用
 - 函数：ProxyHandler 负责进行实现proxy配置进行自动代理的处理函数
+- 结构：FileServer 定义了文件服务器的配置结构
+    - 包含了文件根目录、URL路径、嵌入静态文件系统等信息
+    - 以及多个禁用开关：禁用上传、禁用下载、禁用列出、禁用浏览、禁用Office转换等
+    - 其中 EmbedStaticFs 字段用于设置Go embed嵌入的静态文件系统
+- 结构：FileInfoItem 定义了文件服务器返回的文件信息结构
+    - 包含了文件名、相对路径、大小、大小描述、是否目录、修改时间
+- 函数：FileServerMiddleware 负责生成文件服务器的中间件
+    - 实现了文件浏览、上传、下载、列表等功能
+    - 同时处理嵌入静态资源的访问
+- 函数：ConvertOfficeFile 负贙Office旧格式文件转换为新格式
+    - 支持 .doc -> .docx, .xls -> .xlsx, .ppt -> .pptx
+    - 支持Windows COM组件和LibreOffice两种转换方式
+- 函数：FindLibreOfficePath 动态探测LibreOffice的安装路径
+    - 支持环境变量指定、Windows注册表探测、常见路径遍历
+- 函数：GetPreferredIp 获取系统当前正在使用的出口IP
+- 函数：GetAllIpList 获取所有网卡IPv4地址列表
+
+## 生命周期监听器
+- goboot提供了应用初始化和启动的各个生命周期的监听能力
+- 可以通过监听器在特定阶段执行自定义逻辑
+- 或者在特定阶段修改应用配置
+
+### 监听器类型
+- 监听器的函数类型定义如下
+```go
+type GobootListener func(boot *goboot.GobootApplication)
+```
+
+### 生命周期阶段
+- goboot提供了以下生命周期监听点
+
+| 监听点 | 触发时机 |
+|--------|----------|
+| `OnConfiged` | 配置加载完成后 |
+| `OnBeforeUse` | 开始配置中间件之前（redis/数据源已初始化） |
+| `OnBeforeStaticResources` | 配置静态资源之前 |
+| `OnBeforeTemplatesResources` | 配置模板资源之前 |
+| `OnBeforeProxy` | 配置代理之前 |
+| `OnBeforeMapping` | 配置自动映射之前 |
+| `OnPrepared` | 所有配置准备完成，应用返回之前 |
+| `OnBeforeBanner` | 打印Banner之前（Run阶段） |
+| `OnBeforeRun` | 启动服务之前（Run阶段） |
+
+### 使用示例
+```go
+// 创建监听器
+listener := &goboot.GobootLifecycleListener{
+    // 配置加载完成后，修改配置
+    OnConfiged: []goboot.GobootListener{
+        func(boot *goboot.GobootApplication) {
+            goboot.LogInfo("config loaded, app name: %v", boot.Config.Goboot.Application.Name)
+            // 可以在此修改配置
+            boot.Config.Goboot.Server.Port = 9090
+        },
+    },
+    // 所有配置准备完成后，注册自定义路由
+    OnPrepared: []goboot.GobootListener{
+        func(boot *goboot.GobootApplication) {
+            goboot.LogInfo("application prepared, registering custom routes")
+            boot.App.GET("/custom", func(c *gin.Context) {
+                c.JSON(200, gin.H{"msg": "custom route"})
+            })
+        },
+    },
+}
+
+// 使用监听器获取应用
+app := goboot.GetApplication(goboot.DefaultConfigFile, listener)
+app.Run()
+```
+
+## 高级启动方式
+- 除了使用 `GetDefaultApplication` 和 `GetApplication` 之外
+- goboot还支持更灵活的启动方式
+
+### 方式一：默认启动（最常用）
+```go
+app := goboot.GetDefaultApplication()
+app.AddHandlers(&Api{})
+app.Run()
+```
+
+### 方式二：指定配置文件+监听器
+```go
+app := goboot.GetApplication("./my-config.yml", listener)
+app.AddHandlers(&Api{})
+app.Run()
+```
+
+### 方式三：手动解析配置+自定义配置（支持embed嵌入文件）
+- 这种方式适用于需要将前端资源打包到可执行文件中的场景
+- 通过 `ResolveGobootConfig` 解析配置
+- 然后修改配置结构，设置嵌入的静态文件系统
+- 最后通过 `GetConfigApplication` 创建应用
+```go
+package main
+
+import (
+	"embed"
+	"goboot/goboot"
+	"io/fs"
+)
+
+// 使用go:embed将public目录嵌入到可执行文件中
+//go:embed public/*
+var staticFiles embed.FS
+
+func main() {
+	// 1. 解析配置文件
+	cfgFile := goboot.DefaultConfigFile
+	config := goboot.ResolveGobootConfig(cfgFile)
+
+	// 2. 设置嵌入的静态文件系统
+	distFS, _ := fs.Sub(staticFiles, "public")
+	config.Goboot.Server.FileServer.EmbedStaticFs = distFS
+
+	// 3. 创建应用实例
+	app := goboot.GetConfigApplication(config, nil)
+
+	// 4. 运行应用
+	app.Run()
+}
+```
+- 其中，嵌入的静态资源可通过 `/file-server/public/` 路径访问
+- 例如：`public/lib/vue.js` 可通过 `/file-server/public/lib/vue.js` 访问
+- `/lib/` 或 `/libs/` 路径下的资源自动设置7天缓存，其他资源设置1天缓存
 
 ### 测试Demo
 - 文件结构
@@ -1066,4 +1222,225 @@ goboot:
         - Content-Length
       allowCredentials: true
       maxAgeMinutes: 0
+```
+
+## 文件服务器
+- 在goboot中，除了静态资源托管之外
+- 还内置了一个功能丰富的文件服务器
+- 支持文件上传、下载、目录浏览、在线预览等能力
+- 通过配置 `goboot.server.fileServer` 即可启用
+
+### 基础配置
+- 最简配置如下
+```yaml
+goboot:
+  server:
+    fileServer:
+      enable: true
+      rootPath: ./file-server
+      urlPath: /file-server
+```
+- 启动后，文件服务器将在 `/file-server` 路径下提供服务
+- `rootPath` 指定了文件存储的本地根目录
+
+### 配置项说明
+- 完整的配置项如下
+```yaml
+goboot:
+  server:
+    fileServer:
+      # 是否启用文件服务器
+      enable: false
+      # 文件存储的本地根目录
+      rootPath: ./file-server
+      # 文件服务的URL路径前缀
+      urlPath: /file-server
+      # 是否禁止上传功能
+      disableUpload: true
+      # 是否禁止下载功能
+      disableDownload: false
+      # 是否禁止列出文件列表API
+      disableList: false
+      # 是否禁止网页浏览功能
+      disableBrowser: false
+      # 是否禁止Office旧格式自动转换预览
+      disableOffice: false
+      # 是否禁止使用Windows COM组件进行Office转换
+      disableOfficeCom: false
+```
+- 各配置项说明
+    - `enable`：是否启用文件服务器
+    - `rootPath`：文件存储的本地根目录路径
+    - `urlPath`：文件服务的URL路径前缀，默认为 `/file-server`
+    - `disableUpload`：禁止上传功能
+    - `disableDownload`：禁止下载功能
+    - `disableList`：禁止通过API列出文件列表
+    - `disableBrowser`：禁止网页端浏览文件
+    - `disableOffice`：禁止Office旧格式（.doc/.xls/.ppt）自动转换为新格式预览
+    - `disableOfficeCom`：单独禁止Windows下使用Office/WPS COM组件转换，仅使用LibreOffice
+
+### 功能接口
+- 启用文件服务器后，提供以下四类接口
+- 以下示例均以 `urlPath: /file-server` 为例
+
+#### 网页浏览（Web UI）
+- 访问路径
+```
+GET /file-server/browser/{子路径}
+```
+- 在浏览器中打开即可看到文件管理界面
+- 支持浏览目录、上传文件、下载文件、在线预览
+- 示例
+    - `http://localhost:8080/file-server/browser/` 浏览根目录
+    - `http://localhost:8080/file-server/browser/videos/` 浏览videos子目录
+- 支持 `?sort_random=1` 参数进行随机排序
+
+#### 文件列表 API
+- 请求路径
+```
+GET /file-server/list/{子路径}
+```
+- 返回JSON格式的文件列表
+- 示例
+```
+GET http://localhost:8080/file-server/list/
+GET http://localhost:8080/file-server/list/videos/cat
+```
+- 响应示例
+```json
+{
+  "code": 200,
+  "msg": "",
+  "data": [
+    {
+      "name": "video.mp4",
+      "path": "video.mp4",
+      "size": 10485760,
+      "sizeText": "10MB",
+      "isDir": false,
+      "modifyTime": "2025-01-01 12:00:00"
+    }
+  ]
+}
+```
+
+#### 文件上传
+- 请求路径
+```
+POST /file-server/upload/{子路径}
+```
+- 使用 `multipart/form-data` 格式，字段名为 `file`
+- 示例（curl）
+```shell
+curl -X POST -F "file=@dog.mp4" http://localhost:8080/file-server/upload/
+```
+- 响应示例
+```json
+{
+  "code": 200,
+  "msg": "",
+  "data": "dog.mp4"
+}
+```
+
+#### 文件下载
+- 请求路径
+```
+GET /file-server/download/{子路径}/{文件名}
+```
+- 默认以附件形式下载
+- 添加 `?type=inline` 可在浏览器中直接预览
+- 示例
+    - 下载文件：`GET http://localhost:8080/file-server/download/video/dog.mp4`
+    - 在线预览：`GET http://localhost:8080/file-server/download/video/dog.mp4?type=inline`
+- 支持断点续传（Range请求）
+
+### 在线文件预览
+- 文件服务器内置了丰富的在线预览能力
+- 在网页浏览模式下点击文件即可自动预览
+- 支持的文件类型
+
+| 文件类型 | 支持格式 |
+|----------|----------|
+| 文本/代码 | `.txt` `.log` `.md` `.json` `.xml` `.yml` `.sql` `.java` `.py` `.go` `.js` `.css` `.html` 等 |
+| 视频/音频 | `.mp4` `.avi` `.mkv` `.rmvb` `.flv` `.wav` |
+| Word文档 | `.docx`，以及 `.doc` `.wps` `.rtf` `.odt` 等（需转换） |
+| Excel表格 | `.xlsx`，以及 `.xls` `.csv` `.tsv` `.ods` 等（需转换） |
+| PPT演示 | `.pptx`，以及 `.ppt` `.dps` `.odp` 等（需转换） |
+| PDF | `.pdf` |
+| OFD | `.ofd`（国产版式文档） |
+| 3D模型 | `.glb` `.gltf` `.fbx` |
+| HDR贴图 | `.hdr` |
+
+### Office旧格式转换
+- 对于 `.doc` `.xls` `.ppt` 等旧格式文件
+- 系统会尝试自动转换为新版格式以便预览
+- 转换方式按以下优先级尝试
+    1. Windows下使用Office COM组件（需安装Microsoft Office）
+    2. Windows下使用WPS COM组件（需安装WPS Office）
+    3. LibreOffice（跨平台，需预先安装）
+- 转换后的文件会缓存在源文件同级的 `.converted` 目录下
+- 如果目标文件已存在，则跳过转换直接返回
+- 可通过配置 `disableOffice: true` 禁止旧格式转换
+- 可通过配置 `disableOfficeCom: true` 单独禁止Windows COM组件转换
+- 也可以通过环境变量 `LIBREOFFICE_PATH` 指定LibreOffice的安装路径
+
+### 内嵌静态资源
+- 文件服务器还提供了内嵌静态资源服务
+- 访问路径
+```
+GET /file-server/public/{文件路径}
+```
+- 此功能需要通过代码设置 `FileServer.EmbedStaticFs` 字段
+- 用于将前端资源通过Go的embed打包到可执行文件中
+- 其中 `/lib/` 或 `/libs/` 路径下的资源自动设置7天缓存
+- 其他资源设置1天缓存
+- 具体使用方式参见「高级启动方式」章节
+
+### 配置示例
+- 下面给出几个典型场景的配置
+
+#### 只读文件共享服务
+```yaml
+goboot:
+  server:
+    fileServer:
+      enable: true
+      rootPath: ./shared-files
+      urlPath: /files
+      disableUpload: true
+      disableBrowser: false
+```
+
+#### 搭配静态网站和代理的完整配置
+```yaml
+goboot:
+  application:
+    name: go-server
+  profiles:
+    active: dev
+  server:
+    port: 8080
+    staticResources:
+      enable: true
+      items:
+        - urlPath: /
+          filePath: ./dist
+          tryFiles: index.html
+    fileServer:
+      enable: true
+      rootPath: ./file-server
+      urlPath: /file-server
+    proxy:
+      enable: true
+      items:
+        - name: backend
+          path: /api/
+          redirect: http://127.0.0.1:9090/
+    gzip:
+      enable: true
+      level: DefaultCompression
+    cors:
+      enable: true
+      allowAllOrigins: true
 ```
