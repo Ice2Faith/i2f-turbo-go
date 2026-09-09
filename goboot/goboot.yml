@@ -76,8 +76,11 @@ goboot:
           upstream:
             # 开启 upstream
             enable: true
-            # 算法：ip_hash,random,round,weight
+            # 算法：ip_hash,random,round,weight,header_hash,path_hash
             algo: random
+            # 如果算法是 header_hash 的时候，需要添加请求头列表
+            headers:
+              - Authorization
             backends:
               - backend: https://10.1.x.101:8080/
                 # 权重，当算法为weight时生效

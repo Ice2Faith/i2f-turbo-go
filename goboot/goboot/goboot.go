@@ -430,7 +430,8 @@ type ProxyUpstreamItem struct {
 // 负载均衡配置
 type ProxyUpstream struct {
 	Enable   bool                `yaml:"enable"`
-	Algo     string              `yaml:"algo"`    // ip_hash,random,round,weight
+	Algo     string              `yaml:"algo"`    // ip_hash,random,round,weight,header_hash,path_hash
+	Headers  []string            `yaml:"headers"` // 当使用 header_hash 算法的时候，应该设置参与hash的请求头列表
 	Current  int                 `yaml:"current"` // 当前负载的索引
 	Backends []ProxyUpstreamItem `yaml:"backends"`
 }
@@ -1293,6 +1294,7 @@ func ProxyMiddleware(proxy Proxy) gin.HandlerFunc {
 			if strings.HasPrefix(urlPath, item.Path) {
 				hasMatched = true
 				redirect := item.Redirect
+				proxyPath := urlPath[len(item.Path):]
 
 				upstream := item.Upstream
 				if upstream.Enable &&
@@ -1322,13 +1324,23 @@ func ProxyMiddleware(proxy Proxy) gin.HandlerFunc {
 							}
 						}
 						upstream.Current = candidateIdx
+					} else if algo == "header_hash" {
+						hashStr := ""
+						for _, header := range upstream.Headers {
+							h := c.GetHeader(header)
+							hashStr += h + "\n"
+						}
+						hash := GetHash(hashStr)
+						upstream.Current = int(hash % uint64(len(upstream.Backends)))
+					} else if algo == "path_hash" {
+						hash := GetHash(proxyPath)
+						upstream.Current = int(hash % uint64(len(upstream.Backends)))
 					} else {
 						upstream.Current = rand.Intn(len(upstream.Backends))
 					}
 					redirect = upstream.Backends[upstream.Current].Backend
 				}
 
-				proxyPath := urlPath[len(item.Path):]
 				LogInfo("goboot proxy, path: %v", item)
 				ProxyHandler(c, redirect, proxyPath)
 			}
@@ -1359,6 +1371,18 @@ func ProxyHandler(c *gin.Context, redirect string, proxyPath string) {
 		req.URL.Scheme = remote.Scheme
 		req.URL.Host = remote.Host
 		req.URL.Path = path.Join(remote.Path, proxyPath)
+
+		// 传递客户端IP
+		clientIP := GetClientIP(c)
+		if clientIP != "" {
+			existing := req.Header.Get("X-Forwarded-For")
+			if existing != "" {
+				req.Header.Set("X-Forwarded-For", existing+", "+clientIP)
+			} else {
+				req.Header.Set("X-Forwarded-For", clientIP)
+			}
+			req.Header.Set("X-Real-IP", clientIP)
+		}
 		LogInfo("proxy req: %v %v", req.Method, req.URL)
 	}
 	client.ModifyResponse = func(resp *http.Response) error {
