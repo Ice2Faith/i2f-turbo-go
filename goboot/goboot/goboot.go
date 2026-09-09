@@ -819,6 +819,12 @@ func GetConfigApplication(config *GobootConfig, listener *GobootLifecycleListene
 		engine.Use(cors.New(corsConfig))
 	}
 
+	// 配置限流
+	if server.RateLimit.Enable {
+		LogInfo("goboot enable rate limit, %v count/second, %v bucket size", server.RateLimit.CountPerSecond, server.RateLimit.BucketSize)
+		engine.Use(RateLimitMiddleware(server.RateLimit, boot))
+	}
+
 	// 配置gzip
 	if server.Gzip.Enable {
 		LogInfo("goboot enable gzip.")
@@ -967,12 +973,6 @@ func GetConfigApplication(config *GobootConfig, listener *GobootLifecycleListene
 			LogInfo("goboot mapping, path: %v", item)
 		}
 		engine.Use(MappingMiddleware(server.Mapping, boot))
-	}
-
-	// 配置限流
-	if server.RateLimit.Enable {
-		LogInfo("goboot enable rate limit, %v count/second, %v bucket size", server.RateLimit.CountPerSecond, server.RateLimit.BucketSize)
-		engine.Use(RateLimitMiddleware(server.RateLimit, boot))
 	}
 
 	LogInfo("goboot prepared.")
