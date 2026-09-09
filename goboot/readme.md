@@ -749,6 +749,8 @@ func (api *Api) Login(resp *goboot.CtxResp,user * User) *goboot.CtxResp {
 - 函数：HandleMappingMethodArg 负责实现参数类型的实际参数的自动绑定
     - 是为 MappingHandler 实现自动注入函数调用入参的核心函数调用
 - 函数：ProxyHandler 负责进行实现proxy配置进行自动代理的处理函数
+    - 代理转发时，会自动从请求中提取客户端真实IP（按Forwarded/X-Forwarded-For/X-Real-IP/X-Client-IP/True-Client-IP/RemoteAddr降级链）
+    - 自动设置 X-Forwarded-For 头（已有则追加，否则新建）和 X-Real-IP 头，将客户端IP传递给后端
 - 结构：ProxyUpstreamItem 定义了负载均衡中单个后端服务的配置
     - Backend：后端服务地址
     - Weight：后端服务权重（用于weight算法，启动时会进行归一化处理）
