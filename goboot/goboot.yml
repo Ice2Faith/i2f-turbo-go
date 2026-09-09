@@ -70,6 +70,22 @@ goboot:
         - name: bilibili
           path: /proxy/bilibili/
           redirect: https://www.bilibili.com/
+        - name: upstream
+          path: /proxy/api/
+          # 多台主机，可以使用负载均衡策略配置 upstream
+          upstream:
+            # 开启 upstream
+            enable: true
+            # 算法：ip_hash,random,round,weight
+            algo: random
+            backends:
+              - backend: https://10.1.x.101:8080/
+                # 权重，当算法为weight时生效
+                weight: 3
+              - backend: https://10.1.x.102:8080/
+                weight: 2
+              - backend: https://10.1.x.103:8080/
+                weight: 1
     mapping:
       enable: false
       items:

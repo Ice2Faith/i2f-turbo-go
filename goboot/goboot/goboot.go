@@ -29,6 +29,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"io/fs"
 	"io/ioutil"
@@ -421,11 +422,25 @@ type Https struct {
 	KeyPath string `yaml:"keyPath"`
 }
 
+type ProxyUpstreamItem struct {
+	Backend string  `yaml:"backend"`
+	Weight  float64 `yaml:"weight"`
+}
+
+// 负载均衡配置
+type ProxyUpstream struct {
+	Enable   bool                `yaml:"enable"`
+	Algo     string              `yaml:"algo"`    // ip_hash,random,round,weight
+	Current  int                 `yaml:"current"` // 当前负载的索引
+	Backends []ProxyUpstreamItem `yaml:"backends"`
+}
+
 // 代理配置
 type ProxyItem struct {
-	Name     string `yaml:"name"`
-	Path     string `yaml:"path"`
-	Redirect string `yaml:"redirect"`
+	Name     string        `yaml:"name"`
+	Path     string        `yaml:"path"`
+	Redirect string        `yaml:"redirect"`
+	Upstream ProxyUpstream `yaml:"upstream"`
 }
 
 type Proxy struct {
@@ -1160,8 +1175,116 @@ func HandleMappingMethodArg(arg reflect.Type, boot *GobootApplication, c *gin.Co
 	return reflect.ValueOf(false), false
 }
 
+// GetClientIP 从 Gin Context 中按降级链提取客户端真实 IP
+func GetClientIP(c *gin.Context) string {
+	// 检查 Forwarded 头 (RFC 7239)
+	forwarded := c.GetHeader("Forwarded")
+	if forwarded != "" {
+		// 解析 for 参数，格式如 for="192.0.2.60";proto=http;by=203.0.113.43
+		// 简单提取第一个 for 值
+		for _, part := range strings.Split(forwarded, ";") {
+			part = strings.TrimSpace(part)
+			if strings.HasPrefix(part, "for=") {
+				val := strings.TrimPrefix(part, "for=")
+				// 可能带引号，去掉
+				val = strings.Trim(val, `"`)
+				// 可能包含端口，截断
+				if ip := ExtractIP(val); ip != "" {
+					return ip
+				}
+			}
+		}
+	}
+
+	// 检查 X-Forwarded-For (取最左侧 IP)
+	xff := c.GetHeader("X-Forwarded-For")
+	if xff != "" {
+		// 用逗号分隔，取第一个非空 IP
+		parts := strings.Split(xff, ",")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if ip := ExtractIP(part); ip != "" {
+				return ip
+			}
+		}
+	}
+
+	// 检查 X-Real-IP
+	xri := c.GetHeader("X-Real-IP")
+	if xri != "" {
+		if ip := ExtractIP(xri); ip != "" {
+			return ip
+		}
+	}
+
+	// 检查 X-Client-IP
+	xci := c.GetHeader("X-Client-IP")
+	if xci != "" {
+		if ip := ExtractIP(xci); ip != "" {
+			return ip
+		}
+	}
+
+	// 检查 True-Client-IP
+	tci := c.GetHeader("True-Client-IP")
+	if tci != "" {
+		if ip := ExtractIP(tci); ip != "" {
+			return ip
+		}
+	}
+
+	// Fallback: RemoteAddr (可能包含端口)
+	remoteAddr := c.Request.RemoteAddr
+	if ip := ExtractIP(remoteAddr); ip != "" {
+		return ip
+	}
+
+	return ""
+}
+
+// ExtractIP 从可能含端口的地址中提取 IP，并验证合法性
+func ExtractIP(addr string) string {
+	// 去掉端口（IPv6 格式需要特殊处理）
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		// 可能没有端口，直接使用
+		host = addr
+	}
+	// 验证是否为有效 IP
+	ip := net.ParseIP(host)
+	if ip != nil {
+		return ip.String()
+	}
+	return ""
+}
+
+func GetHash(key string) uint64 {
+	h := fnv.New64a()
+	// 这里会涉及 string 转 []byte 的拷贝，但性能依然很好
+	_, err := h.Write([]byte(key))
+	if err != nil {
+		return 0
+	}
+	return h.Sum64()
+}
+
 // 代理请求中间件
 func ProxyMiddleware(proxy Proxy) gin.HandlerFunc {
+	// 按权重的upstream的情况下，需要对权重先进行归一化处理
+	for _, item := range proxy.Items {
+		upstream := item.Upstream
+
+		if upstream.Backends != nil &&
+			len(upstream.Backends) > 0 {
+			sumWeight := 0.0
+			for _, backend := range upstream.Backends {
+				sumWeight += backend.Weight
+			}
+			for _, backend := range upstream.Backends {
+				backend.Weight = (backend.Weight / sumWeight)
+			}
+		}
+	}
 	return func(c *gin.Context) {
 		hasMatched := false
 		// 检查路径前缀匹配
@@ -1170,6 +1293,41 @@ func ProxyMiddleware(proxy Proxy) gin.HandlerFunc {
 			if strings.HasPrefix(urlPath, item.Path) {
 				hasMatched = true
 				redirect := item.Redirect
+
+				upstream := item.Upstream
+				if upstream.Enable &&
+					upstream.Backends != nil &&
+					len(upstream.Backends) > 0 {
+					// 有配置负载均衡
+					algo := upstream.Algo
+					if algo == "ip_hash" {
+						ip := GetClientIP(c)
+						hash := GetHash(ip)
+						upstream.Current = int(hash % uint64(len(upstream.Backends)))
+					} else if algo == "round" {
+						upstream.Current = (upstream.Current + 1) % len(upstream.Backends)
+					} else if algo == "weight" {
+						rate := rand.Float64()
+						// 使用最大概率优先匹配
+						candidateIdx := 0
+						candidateWeight := 0.0
+						for idx, backend := range upstream.Backends {
+							// 满足概率要求
+							if backend.Weight <= rate {
+								// 概率更高优先
+								if backend.Weight > candidateWeight {
+									candidateIdx = idx
+									candidateWeight = backend.Weight
+								}
+							}
+						}
+						upstream.Current = candidateIdx
+					} else {
+						upstream.Current = rand.Intn(len(upstream.Backends))
+					}
+					redirect = upstream.Backends[upstream.Current].Backend
+				}
+
 				proxyPath := urlPath[len(item.Path):]
 				LogInfo("goboot proxy, path: %v", item)
 				ProxyHandler(c, redirect, proxyPath)
