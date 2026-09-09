@@ -61,6 +61,7 @@ import (
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 	goredis "github.com/redis/go-redis/v9"
+	"golang.org/x/time/rate"
 	"gopkg.in/yaml.v3"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
@@ -353,6 +354,7 @@ type Server struct {
 	Gzip              Gzip              `yaml:"gzip"`
 	Cors              Cors              `yaml:"cors"`
 	Proxy             Proxy             `yaml:"proxy"`
+	RateLimit         RateLimit         `yaml:"rateLimit"`
 	Mapping           Mapping           `yaml:"mapping"`
 	Session           Session           `yaml:"session"`
 	Redis             Redis             `yaml:"redis"`
@@ -453,6 +455,14 @@ type Proxy struct {
 type Mapping struct {
 	Enable bool     `yaml:"enable"`
 	Items  []string `yaml:"items"`
+}
+
+// 限流配置
+// 令牌桶算法，每秒生产 CountPerSecond 个令牌放入桶中，桶的最大大小为 BucketSize
+type RateLimit struct {
+	Enable         bool    `yaml:"enable"`
+	CountPerSecond float64 `yaml:"countPerSecond"` // 每秒生产个数
+	BucketSize     int     `yaml:"bucketSize"`     // 最大桶大小
 }
 
 // GZIP配置
@@ -952,17 +962,39 @@ func GetConfigApplication(config *GobootConfig, listener *GobootLifecycleListene
 
 	// 配置自动映射
 	if server.Mapping.Enable {
-		LogInfo("goboot enbale %v mapping(s)", len(server.Mapping.Items))
+		LogInfo("goboot enable %v mapping(s)", len(server.Mapping.Items))
 		for _, item := range server.Mapping.Items {
 			LogInfo("goboot mapping, path: %v", item)
 		}
 		engine.Use(MappingMiddleware(server.Mapping, boot))
 	}
 
+	// 配置限流
+	if server.RateLimit.Enable {
+		LogInfo("goboot enable rate limit, %v count/second, %v bucket size", server.RateLimit.CountPerSecond, server.RateLimit.BucketSize)
+		engine.Use(RateLimitMiddleware(server.RateLimit, boot))
+	}
+
 	LogInfo("goboot prepared.")
 	invokeListeners(boot, boot.Listeners.OnPrepared)
 
 	return boot
+}
+
+// 限流请求中间件
+func RateLimitMiddleware(rateLimit RateLimit, boot *GobootApplication) gin.HandlerFunc {
+	var limiter = rate.NewLimiter(rate.Limit(rateLimit.CountPerSecond), rateLimit.BucketSize)
+	return func(c *gin.Context) {
+		if !limiter.Allow() {
+			// 被限流，返回 429 Too Many Requests
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+				"status":  429,
+				"message": "Too many requests, please retry later!",
+			})
+			return
+		}
+		c.Next() // 放行，继续处理后续逻辑
+	}
 }
 
 // 映射请求中间件

@@ -93,6 +93,10 @@ goboot:
       enable: false
       items:
         - /api/
+    rateLimit:
+      enable: false
+      countPerSecond: 30
+      bucketSize: 100
     fileServer:
       enable: false
       rootPath: ./file-server

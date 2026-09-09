@@ -1,6 +1,6 @@
 module goboot
 
-go 1.19
+go 1.26.0
 
 require (
 	github.com/gin-contrib/cors v1.7.2
@@ -11,6 +11,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.10.9
 	github.com/redis/go-redis/v9 v9.6.1
+	golang.org/x/time v0.16.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/mysql v1.5.7
 	gorm.io/driver/postgres v1.5.9
