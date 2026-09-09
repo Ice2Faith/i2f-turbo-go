@@ -17,7 +17,7 @@ Goboot 是一个基于 Golang 的轻量级 Web 服务工具，采用类似 Sprin
 
 - **静态网站托管**：部署前端项目（Vue、React 等），支持 SPA 单页应用的 `tryFiles` 配置
 - **文件服务器**：提供文件上传、下载、在线浏览（支持 Office、PDF、视频、3D 模型等）
-- **反向代理**：将请求转发到后端服务
+- **反向代理**：将请求转发到后端服务，支持多后端负载均衡（轮询、随机、IP 哈希、加权）
 - **HTTPS**：配置 SSL 证书启用加密访问
 - **GZIP 压缩**：启用响应压缩提升传输效率
 - **CORS 跨域**：配置跨域策略满足前后端分离需求
@@ -134,6 +134,14 @@ goboot:
         - name: backend
           path: /api/
           redirect: http://127.0.0.1:9090/
+          upstream:
+            enable: false
+            algo: round
+            backends:
+              - backend: http://127.0.0.1:9090/
+                weight: 1
+              - backend: http://127.0.0.1:9091/
+                weight: 2
     cors:
       enable: true
       allowAllOrigins: true
@@ -456,7 +464,8 @@ goboot:
 |--------|------|
 | `name` | 代理名称（仅用于日志标识，可随意命名） |
 | `path` | 匹配的 URL 路径前缀 |
-| `redirect` | 转发的目标地址 |
+| `redirect` | 转发的目标地址（未启用 upstream 时生效） |
+| `upstream` | 负载均衡配置（启用后 `redirect` 将被忽略） |
 
 ### 6.3 工作原理
 
@@ -502,6 +511,93 @@ goboot:
 ```
 
 这样前端页面和后端 API 都通过 80 端口访问，无需处理跨域问题。
+
+### 6.5 Upstream 负载均衡
+
+当需要将请求分发到多个后端服务时，可以使用 `upstream` 配置实现负载均衡。
+
+#### 基础配置
+
+```yaml
+goboot:
+  server:
+    proxy:
+      enable: true
+      items:
+        - name: backend-cluster
+          path: /api/
+          upstream:
+            enable: true
+            algo: round
+            backends:
+              - backend: http://127.0.0.1:9090/
+                weight: 1
+              - backend: http://127.0.0.1:9091/
+                weight: 1
+              - backend: http://127.0.0.1:9092/
+                weight: 1
+```
+
+> 当 `upstream.enable` 为 `true` 且 `backends` 非空时，`redirect` 字段将被忽略，实际转发地址由负载均衡算法从 `backends` 中选取。
+
+#### upstream 配置说明
+
+| 配置项 | 类型 | 说明 |
+|--------|------|------|
+| `enable` | bool | 是否启用负载均衡 |
+| `algo` | string | 负载均衡算法，可选值见下表 |
+| `backends` | []object | 后端服务列表 |
+| `backends[].backend` | string | 后端服务地址 |
+| `backends[].weight` | float64 | 后端服务权重（仅 `weight` 算法时生效） |
+
+#### 负载均衡算法
+
+| 算法 | 说明 |
+|------|------|
+| `round` | 轮询算法，依次将请求分发给各个后端 |
+| `random` | 随机算法，随机选取一个后端（默认） |
+| `ip_hash` | IP 哈希算法，同一客户端 IP 始终分配到同一后端 |
+| `weight` | 加权随机算法，根据权重概率选取后端 |
+
+#### 加权负载均衡示例
+
+使用 `weight` 算法可以让性能更好的服务器承担更多流量：
+
+```yaml
+proxy:
+  enable: true
+  items:
+    - name: weighted-cluster
+      path: /api/
+      upstream:
+        enable: true
+        algo: weight
+        backends:
+          - backend: http://server-a:9090/
+            weight: 3
+          - backend: http://server-b:9090/
+            weight: 1
+```
+
+上述配置中，`server-a` 获得请求的概率约为 `server-b` 的 3 倍。
+
+#### IP 哈希实现会话保持示例
+
+使用 `ip_hash` 算法可以确保同一客户端的请求始终到达同一个后端，适用于需要会话保持的场景：
+
+```yaml
+proxy:
+  enable: true
+  items:
+    - name: sticky-cluster
+      path: /api/
+      upstream:
+        enable: true
+        algo: ip_hash
+        backends:
+          - backend: http://server-a:9090/
+          - backend: http://server-b:9090/
+```
 
 ---
 
@@ -916,6 +1012,10 @@ goboot:
 | `goboot.server.proxy.items[].name` | string | - | 代理名称 |
 | `goboot.server.proxy.items[].path` | string | - | 匹配路径前缀 |
 | `goboot.server.proxy.items[].redirect` | string | - | 转发目标地址 |
+| `goboot.server.proxy.items[].upstream.enable` | bool | `false` | 启用负载均衡 |
+| `goboot.server.proxy.items[].upstream.algo` | string | `random` | 负载均衡算法（round/random/ip_hash/weight） |
+| `goboot.server.proxy.items[].upstream.backends[].backend` | string | - | 后端服务地址 |
+| `goboot.server.proxy.items[].upstream.backends[].weight` | float64 | `1` | 后端服务权重 |
 | `goboot.server.cors.enable` | bool | `false` | 启用跨域配置 |
 | `goboot.server.cors.allowAllOrigins` | bool | `false` | 允许所有来源 |
 | `goboot.server.cors.allowOrigins` | []string | - | 允许来源列表 |
