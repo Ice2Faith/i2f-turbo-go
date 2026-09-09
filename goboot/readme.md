@@ -166,6 +166,7 @@ goboot:
           upstream:
             enable: false
             algo: round
+            headers: []
             backends:
               - backend: http://127.0.0.1:9090/
                 weight: 1
@@ -368,8 +369,10 @@ goboot:
           upstream:
             # 是否启用负载均衡
             enable: false
-            # 负载均衡算法：round(轮询)/random(随机，默认)/ip_hash(IP哈希)/weight(加权随机)
+            # 负载均衡算法：round(轮询)/random(随机，默认)/ip_hash(IP哈希)/weight(加权随机)/header_hash(请求头哈希)/path_hash(路径哈希)
             algo: round
+            # 参与哈希计算的请求头列表（仅header_hash算法时使用）
+            headers: []
             # 后端服务列表
             backends:
               - backend: http://127.0.0.1:9090/
@@ -751,7 +754,8 @@ func (api *Api) Login(resp *goboot.CtxResp,user * User) *goboot.CtxResp {
     - Weight：后端服务权重（用于weight算法，启动时会进行归一化处理）
 - 结构：ProxyUpstream 定义了代理的负载均衡配置
     - Enable：是否启用负载均衡
-    - Algo：负载均衡算法，支持 ip_hash/round/random/weight
+    - Algo：负载均衡算法，支持 ip_hash/round/random/weight/header_hash/path_hash
+    - Headers：参与哈希计算的请求头列表（用于header_hash算法）
     - Current：当前轮询或选中的后端索引（运行时状态）
     - Backends：后端服务列表（[]ProxyUpstreamItem）
 - 函数：GetClientIP 从请求上下文中按降级链提取客户端真实IP
@@ -1090,6 +1094,7 @@ goboot:
           upstream:
             enable: false
             algo: round
+            headers: []
             backends:
               - backend: http://127.0.0.1:9090/
                 weight: 1
@@ -1239,6 +1244,7 @@ goboot:
           upstream:
             enable: false
             algo: round
+            headers: []
             backends:
               - backend: http://127.0.0.1:9090/
                 weight: 1
@@ -1487,6 +1493,7 @@ goboot:
           upstream:
             enable: false
             algo: round
+            headers: []
             backends:
               - backend: http://127.0.0.1:9090/
                 weight: 1

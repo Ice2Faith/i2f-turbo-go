@@ -137,6 +137,7 @@ goboot:
           upstream:
             enable: false
             algo: round
+            headers: []
             backends:
               - backend: http://127.0.0.1:9090/
                 weight: 1
@@ -546,6 +547,7 @@ goboot:
 |--------|------|------|
 | `enable` | bool | 是否启用负载均衡 |
 | `algo` | string | 负载均衡算法，可选值见下表 |
+| `headers` | []string | 参与哈希计算的请求头列表（仅 `header_hash` 算法时使用） |
 | `backends` | []object | 后端服务列表 |
 | `backends[].backend` | string | 后端服务地址 |
 | `backends[].weight` | float64 | 后端服务权重（仅 `weight` 算法时生效） |
@@ -558,6 +560,8 @@ goboot:
 | `random` | 随机算法，随机选取一个后端（默认） |
 | `ip_hash` | IP 哈希算法，同一客户端 IP 始终分配到同一后端 |
 | `weight` | 加权随机算法，根据权重概率选取后端 |
+| `header_hash` | 请求头哈希算法，根据指定请求头的哈希值分配后端，同一请求头组合始终分配到同一后端 |
+| `path_hash` | 路径哈希算法，根据请求路径的哈希值分配后端，同一路径始终分配到同一后端 |
 
 #### 加权负载均衡示例
 
@@ -598,6 +602,49 @@ proxy:
           - backend: http://server-a:9090/
           - backend: http://server-b:9090/
 ```
+
+#### 请求头哈希示例
+
+使用 `header_hash` 算法可以根据指定的请求头进行哈希分配，适用于需要按租户、用户标识等维度进行流量分发的场景：
+
+```yaml
+proxy:
+  enable: true
+  items:
+    - name: header-routed
+      path: /api/
+      upstream:
+        enable: true
+        algo: header_hash
+        headers:
+          - X-Tenant-Id
+          - Authorization
+        backends:
+          - backend: http://server-a:9090/
+          - backend: http://server-b:9090/
+```
+
+上述配置中，系统会将 `X-Tenant-Id` 和 `Authorization` 两个请求头的值拼接后计算哈希，相同请求头组合的请求始终路由到同一个后端。
+
+#### 路径哈希示例
+
+使用 `path_hash` 算法可以根据请求路径进行哈希分配，适用于希望同一资源路径始终由同一后端处理的场景：
+
+```yaml
+proxy:
+  enable: true
+  items:
+    - name: path-routed
+      path: /api/
+      upstream:
+        enable: true
+        algo: path_hash
+        backends:
+          - backend: http://server-a:9090/
+          - backend: http://server-b:9090/
+```
+
+上述配置中，相同的请求路径（如 `/api/users/123`）始终会被路由到同一个后端，相当于实现了基于资源的缓存亲和。
 
 ---
 
@@ -1013,7 +1060,8 @@ goboot:
 | `goboot.server.proxy.items[].path` | string | - | 匹配路径前缀 |
 | `goboot.server.proxy.items[].redirect` | string | - | 转发目标地址 |
 | `goboot.server.proxy.items[].upstream.enable` | bool | `false` | 启用负载均衡 |
-| `goboot.server.proxy.items[].upstream.algo` | string | `random` | 负载均衡算法（round/random/ip_hash/weight） |
+| `goboot.server.proxy.items[].upstream.algo` | string | `random` | 负载均衡算法（round/random/ip_hash/weight/header_hash/path_hash） |
+| `goboot.server.proxy.items[].upstream.headers` | []string | - | 参与哈希计算的请求头列表（header_hash 算法） |
 | `goboot.server.proxy.items[].upstream.backends[].backend` | string | - | 后端服务地址 |
 | `goboot.server.proxy.items[].upstream.backends[].weight` | float64 | `1` | 后端服务权重 |
 | `goboot.server.cors.enable` | bool | `false` | 启用跨域配置 |
