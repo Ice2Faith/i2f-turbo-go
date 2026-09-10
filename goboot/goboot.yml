@@ -8,6 +8,7 @@ goboot:
     bannerPath: ./banner.txt
     staticResources:
       enable: true
+      disablePreCompressGzip: false
       items:
         - urlPath: /web
           filePath: ./web/
@@ -22,13 +23,13 @@ goboot:
       enable: false
       # cookie/redis
       impl: cookie
-      secretKey: 123456
+      secretKey: ${goboot.session.secret-key:123456}
       sessionKey: go-session
     redis:
       enable: false
       host: 127.0.0.1
       port: 6379
-      password: ltb12315
+      password: ${goboot.redis.password:123456}
       database: 0
     datasource:
       enable: false
@@ -39,7 +40,7 @@ goboot:
       # url: user:password@tcp(localhost:5555)/dbname?tls=skip-verify&autocommit=true
       url: root:123456@tcp(127.0.0.1:3306)/test_db?charset=utf8mb4&parseTime=True&loc=Local
       username: root
-      password: 123456
+      password: ${goboot.datasource.password:123456}
       database: test_db
     gorm:
       enable: false

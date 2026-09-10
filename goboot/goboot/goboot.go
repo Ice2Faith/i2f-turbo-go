@@ -45,6 +45,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -373,8 +374,9 @@ type StaticResourcesItem struct {
 
 // 静态资源配置
 type StaticResources struct {
-	Enable bool                  `yaml:"enable"`
-	Items  []StaticResourcesItem `yaml:"items"`
+	Enable                 bool                  `yaml:"enable"`
+	DisablePreCompressGzip bool                  `yaml:"disablePreCompressGzip"`
+	Items                  []StaticResourcesItem `yaml:"items"`
 }
 
 // 模板渲染配置
@@ -582,6 +584,82 @@ func GetDefaultApplication() *GobootApplication {
 	return GetApplication(DefaultConfigFile, nil)
 }
 
+/*
+*
+命令行-D参数
+*/
+var _commandDashDefArgsMap map[string]string
+
+/*
+*
+获取命令行的 -D 参数
+通过全局缓存实现
+*/
+func GetCommandDashDefArgsMap() map[string]string {
+	if _commandDashDefArgsMap != nil {
+		return _commandDashDefArgsMap
+	}
+	_commandDashDefArgsMap = ParseCommandDashDefArgsMap(os.Args)
+	return _commandDashDefArgsMap
+}
+
+/*
+从命令行参数里解析 -D 参数
+-Dxxx=xxx
+和java的一样
+*/
+func ParseCommandDashDefArgsMap(args []string) map[string]string {
+	m := make(map[string]string)
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+
+		// 形式：-Dname=value（一个参数）
+		if strings.HasPrefix(a, "-D") {
+			kv := a[2:]
+			if eq := strings.Index(kv, "="); eq >= 0 {
+				m[kv[:eq]] = kv[eq+1:]
+			} else {
+				// 只有名字没值，等同空串
+				m[kv] = ""
+			}
+		}
+	}
+	return m
+}
+
+var _placeholderRe = regexp.MustCompile(`\$\{[^}]*\}`)
+
+/*
+*
+处理环境变量占位符
+*/
+func ResolvePlaceholders(content string) string {
+	propMap := GetCommandDashDefArgsMap()
+	return _placeholderRe.ReplaceAllStringFunc(content, func(match string) string {
+		// 去掉前后的 ${ 和 }
+		inner := match[2 : len(match)-1]
+
+		// 按第一个冒号切分，剩下的全部算默认值（默认值里可以含冒号）
+		name := inner
+		def := ""
+		if i := strings.Index(inner, ":"); i >= 0 {
+			name = inner[:i]
+			def = inner[i+1:]
+		}
+
+		// 1. 命令行 -D 参数（优先级最高）
+		if v, ok := propMap[name]; ok {
+			return v
+		}
+		// 2. 环境变量
+		if v, ok := os.LookupEnv(name); ok {
+			return v
+		}
+		// 3. 默认值（没有就是空串）
+		return def
+	})
+}
+
 // 从指定文件读取应用配置
 // 始终返回配置，第二个返回值表示是否正确读取了配置
 // 不会处理Profiles
@@ -600,6 +678,11 @@ func ReadGobootConfig(cfgFile string) (config *GobootConfig, ok bool) {
 	if err != nil {
 		LogWarn("read config file %v error of %v", cfgFile, err)
 	}
+
+	// 处理环境变量/-D参数的占位符配置，目标是适配容器化环境
+	text := string(bytes)
+	text = ResolvePlaceholders(text)
+	bytes = []byte(text)
 
 	// 解析yaml到结构
 	if err == nil {
@@ -825,6 +908,19 @@ func GetConfigApplication(config *GobootConfig, listener *GobootLifecycleListene
 		engine.Use(RateLimitMiddleware(server.RateLimit, boot))
 	}
 
+	// 配置静态资源的与压缩gz文件，必须在通用动态gzip之前注册中间件
+	if server.StaticResources.Enable &&
+		!server.StaticResources.DisablePreCompressGzip {
+		for _, staticItem := range server.StaticResources.Items {
+			LogInfo("goboot enable static resources pre-compress gzip, mapping: %v --> %v", staticItem.UrlPath, staticItem.FilePath)
+			if _, err := os.Stat(staticItem.FilePath); os.IsNotExist(err) {
+				os.MkdirAll(staticItem.FilePath, 0777)
+			}
+			// 配置静态资源的预压缩gz文件
+			engine.Use(PreCompressGzipFileResponseMiddleware(staticItem.UrlPath, staticItem.FilePath))
+		}
+	}
+
 	// 配置gzip
 	if server.Gzip.Enable {
 		LogInfo("goboot enable gzip.")
@@ -888,48 +984,6 @@ func GetConfigApplication(config *GobootConfig, listener *GobootLifecycleListene
 		}
 	}
 
-	LogInfo("goboot before static resources.")
-	invokeListeners(boot, boot.Listeners.OnBeforeStaticResources)
-
-	// 配置静态资源
-	if server.StaticResources.Enable {
-		for _, staticItem := range server.StaticResources.Items {
-			LogInfo("goboot enable static resources, mapping: %v --> %v", staticItem.UrlPath, staticItem.FilePath)
-			if _, err := os.Stat(staticItem.FilePath); os.IsNotExist(err) {
-				os.MkdirAll(staticItem.FilePath, 0777)
-			}
-			engine.Static(staticItem.UrlPath, staticItem.FilePath)
-		}
-		// 处理404时的资源的try files处理
-		engine.NoRoute(func(c *gin.Context) {
-			reqPath := c.Request.URL.Path
-			if !strings.HasSuffix(reqPath, "/") {
-				reqPath = reqPath + "/"
-			}
-			for _, staticItem := range server.StaticResources.Items {
-				urlPath := staticItem.UrlPath
-				if !strings.HasSuffix(urlPath, "/") {
-					urlPath = urlPath + "/"
-				}
-				if !strings.HasPrefix(reqPath, urlPath) {
-					continue
-				}
-				filesArr := strings.Split(staticItem.TryFiles, " ")
-				for _, fileItem := range filesArr {
-					if fileItem == "" {
-						continue
-					}
-					tryFile := staticItem.FilePath + "/" + fileItem
-					_, err := os.Stat(tryFile)
-					if err == nil {
-						LogInfo("[try files] url: %v try to %v", reqPath, urlPath+fileItem)
-						c.File(tryFile)
-					}
-				}
-			}
-		})
-	}
-
 	LogInfo("goboot before templates resources.")
 	invokeListeners(boot, boot.Listeners.OnBeforeTemplatesResources)
 
@@ -975,10 +1029,135 @@ func GetConfigApplication(config *GobootConfig, listener *GobootLifecycleListene
 		engine.Use(MappingMiddleware(server.Mapping, boot))
 	}
 
+	LogInfo("goboot before static resources.")
+	invokeListeners(boot, boot.Listeners.OnBeforeStaticResources)
+
+	// 配置静态资源，最后配置路由
+	if server.StaticResources.Enable {
+		for _, staticItem := range server.StaticResources.Items {
+			LogInfo("goboot enable static resources, mapping: %v --> %v", staticItem.UrlPath, staticItem.FilePath)
+			if _, err := os.Stat(staticItem.FilePath); os.IsNotExist(err) {
+				os.MkdirAll(staticItem.FilePath, 0777)
+			}
+
+			engine.Static(staticItem.UrlPath, staticItem.FilePath)
+		}
+		// 处理404时的资源的try files处理
+		engine.NoRoute(func(c *gin.Context) {
+			reqPath := c.Request.URL.Path
+			if !strings.HasSuffix(reqPath, "/") {
+				reqPath = reqPath + "/"
+			}
+			for _, staticItem := range server.StaticResources.Items {
+				urlPath := staticItem.UrlPath
+				if !strings.HasSuffix(urlPath, "/") {
+					urlPath = urlPath + "/"
+				}
+				if !strings.HasPrefix(reqPath, urlPath) {
+					continue
+				}
+				filesArr := strings.Split(staticItem.TryFiles, " ")
+				for _, fileItem := range filesArr {
+					if fileItem == "" {
+						continue
+					}
+					tryFile := staticItem.FilePath + "/" + fileItem
+					_, err := os.Stat(tryFile)
+					if err == nil {
+						LogInfo("[try files] url: %v try to %v", reqPath, urlPath+fileItem)
+						c.File(tryFile)
+					}
+				}
+			}
+		})
+	}
+
 	LogInfo("goboot prepared.")
 	invokeListeners(boot, boot.Listeners.OnPrepared)
 
 	return boot
+}
+
+// 预压缩gz静态资源响应中间件
+func PreCompressGzipFileResponseMiddleware(rootUrlPath string, rootFilePath string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// 非GET|HEAD请求，跳过
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+			c.Next()
+			return
+		}
+
+		// range 请求，跳过
+		if c.GetHeader("Range") != "" {
+			c.Next()
+			return
+		}
+
+		// 客户端不支持 gzip，跳过
+		if !strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") {
+			c.Next()
+			return
+		}
+
+		// 路径前缀不匹配，跳过
+		urlPath := c.Request.URL.Path
+		if !strings.HasPrefix(urlPath, rootUrlPath) {
+			c.Next()
+			return
+		}
+
+		filePath := urlPath[len(rootUrlPath):]
+		fullPath := filepath.Join(rootFilePath, filePath)
+
+		// 检查文件是否在允许的目录内
+		allowedPath, _ := filepath.Abs(rootFilePath)
+		absPath, _ := filepath.Abs(fullPath)
+		if !strings.HasPrefix(absPath, allowedPath) {
+			c.Next()
+			return
+		}
+
+		// 检查文件是否存在
+		info, err := os.Stat(fullPath)
+		if os.IsNotExist(err) {
+			c.Next()
+			return
+		}
+
+		// 检查是否是目录
+		if info.IsDir() {
+			c.Next()
+			return
+		}
+
+		gzipFullPath := fullPath + ".gz"
+		// 检查文件是否存在
+		gzipFileInfo, err := os.Stat(gzipFullPath)
+		if os.IsNotExist(err) {
+			c.Next()
+			return
+		}
+
+		// 尝试 .gz
+		file, err := os.Open(gzipFullPath)
+		if err != nil {
+			c.Next()
+			return
+		}
+		defer file.Close()
+
+		LogInfo("goboot pre-gzip, path: %v", filePath)
+
+		c.Header("Content-Encoding", "gzip")
+		c.Header("Vary", "Accept-Encoding")
+		if ct := mime.TypeByExtension(filepath.Ext(fullPath)); ct != "" {
+			c.Header("Content-Type", ct)
+		}
+		http.ServeContent(c.Writer, c.Request, filepath.Base(fullPath), gzipFileInfo.ModTime(), file)
+
+		// 阻止 engine.Static 再写一次响应
+		c.Abort()
+	}
 }
 
 // 限流请求中间件
