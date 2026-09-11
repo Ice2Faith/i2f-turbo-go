@@ -2013,7 +2013,7 @@ func ExtractAllFsToDir(fsys fs.FS, destDir string) error {
 var _fileServerPublicFs http.FileSystem
 func GetFileServerHttpFs() (http.FileSystem,string){
 	// 解压释放资源到临时路径
-	releasePath := "./.tmp-goboot/public"
+	releasePath := "./.goboot/tmp/public"
 
 	if _fileServerPublicFs!=nil{
 		return _fileServerPublicFs,releasePath
