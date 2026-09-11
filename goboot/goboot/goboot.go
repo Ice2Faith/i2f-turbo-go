@@ -23,6 +23,7 @@ go get gorm.io/driver/postgres
 */
 // /////////////////////////////////////////////////////////
 import (
+	gogzip "compress/gzip"
 	"context"
 	"crypto/tls"
 	"database/sql"
@@ -374,9 +375,15 @@ type StaticResourcesItem struct {
 
 // 静态资源配置
 type StaticResources struct {
-	Enable                 bool                  `yaml:"enable"`
-	DisablePreCompressGzip bool                  `yaml:"disablePreCompressGzip"`
-	Items                  []StaticResourcesItem `yaml:"items"`
+	Enable                        bool                  `yaml:"enable"`
+	DisablePreCompressGzipHandler bool                  `yaml:"disablePreCompressGzipHandler"`
+	PreCompressGzip               PreCompressGzipConfig `yaml:"preCompressGzip"`
+	Items                         []StaticResourcesItem `yaml:"items"`
+}
+
+type PreCompressGzipConfig struct {
+	Enable  bool        `yaml:"enable"`
+	Options GzipOptions `yaml:"options"`
 }
 
 // 模板渲染配置
@@ -908,11 +915,31 @@ func GetConfigApplication(config *GobootConfig, listener *GobootLifecycleListene
 		engine.Use(RateLimitMiddleware(server.RateLimit, boot))
 	}
 
+	// 启动时，自动预压缩gzip文件
+	if server.StaticResources.Enable &&
+		server.StaticResources.PreCompressGzip.Enable {
+		gzipOptions := server.StaticResources.PreCompressGzip.Options
+		for _, staticItem := range server.StaticResources.Items {
+			LogInfo("goboot begin static resources pre-compress gzip, process path: %v ...", staticItem.FilePath)
+			if _, err := os.Stat(staticItem.FilePath); os.IsNotExist(err) {
+				os.MkdirAll(staticItem.FilePath, 0777)
+			}
+			// 启动协程异步进行预压缩
+			go func() {
+				if err := GzipCompressWebResources(staticItem.FilePath, gzipOptions); err != nil {
+					LogInfo("gzip pre-compress file error: %v", err)
+				}
+				LogInfo("goboot finished static resources pre-compress gzip, process path: %v", staticItem.FilePath)
+			}()
+		}
+
+	}
+
 	// 配置静态资源的与压缩gz文件，必须在通用动态gzip之前注册中间件
 	if server.StaticResources.Enable &&
-		!server.StaticResources.DisablePreCompressGzip {
+		!server.StaticResources.DisablePreCompressGzipHandler {
 		for _, staticItem := range server.StaticResources.Items {
-			LogInfo("goboot enable static resources pre-compress gzip, mapping: %v --> %v", staticItem.UrlPath, staticItem.FilePath)
+			LogInfo("goboot enable static resources pre-compress gzip handler, mapping: %v --> %v", staticItem.UrlPath, staticItem.FilePath)
 			if _, err := os.Stat(staticItem.FilePath); os.IsNotExist(err) {
 				os.MkdirAll(staticItem.FilePath, 0777)
 			}
@@ -1076,6 +1103,194 @@ func GetConfigApplication(config *GobootConfig, listener *GobootLifecycleListene
 	invokeListeners(boot, boot.Listeners.OnPrepared)
 
 	return boot
+}
+
+// 默认需要预压缩的网站资源后缀
+var defaultGzipSuffixes = []string{
+	// 前端资源类
+	".html", ".htm", ".xhtml", ".xht",
+	".js", ".mjs", ".cjs",
+	".css", ".sass", ".less",
+	".json", ".jsonc", ".jsonl",
+	".xml",
+	".svg",
+	".txt",
+	".ico",
+	".map",
+	".ttf", ".otf", ".eot",
+	".wasm",
+	".jsonld", ".geojson", ".topojson",
+
+	// 文档资源类
+	".rss", ".atom", // 订阅源
+	".xsl", ".xslt", // XSLT 样式表
+	".vtt", ".srt", // 字幕
+	".m3u8", ".m3u", // 流媒体资源目录
+	".csv", ".tsv", // 分隔符表格
+	".md", ".markdown",
+
+	// woff,woff2 是已经压缩过的字体格式，一般再次压缩也没什么效果
+	// 图片、音频、视频等，本身就已经是压缩格式，且一般文件较大，压缩收益也不高
+	// 办公文档大多数也是压缩格式
+
+	// 编程类
+	".vue", ".java", ".py", ".php", ".go",
+	".sql",
+	".h", ".hpp", ".c", ".cpp",
+	".yml", ".yaml", ".toml", ".properties", ".ini",
+}
+
+type GzipOptions struct {
+	// 最小源文件大小阈值（字节）。< 0 用默认值 256；== 0 表示不限制
+	MinByteSize int `yaml:"minByteSize"`
+	// 目标文件比源文件大时，是否删除目标文件
+	RemoveIfLarger bool `yaml:"removeIfLarger"`
+	// 是否强制覆盖；false 时按源/目标 mtime 判断
+	ForceCover bool `yaml:"forceCover"`
+	// 需要压缩的后缀；nil/空时用 defaultGzipSuffixes
+	Suffixes []string `yaml:"suffixes"`
+}
+
+func GzipCompressWebResourcesDefault(processPath string) error {
+	return GzipCompressWebResources(processPath, GzipOptions{})
+}
+
+// gzipCompressWebResources 遍历 processPath 目录，
+// 对目录下所有满足条件的文件生成同名的 .gz 预压缩文件。
+func GzipCompressWebResources(processPath string, opts GzipOptions) error {
+	if opts.Suffixes == nil || len(opts.Suffixes) == 0 {
+		opts.Suffixes = defaultGzipSuffixes
+	}
+
+	// 阈值归一化
+	if opts.MinByteSize < 0 {
+		opts.MinByteSize = 256
+	}
+	minSize := int64(opts.MinByteSize)
+
+	// 统一后缀格式：小写、带前导点
+	suffixSet := make(map[string]struct{}, len(opts.Suffixes))
+	for _, s := range opts.Suffixes {
+		s = strings.ToLower(strings.TrimSpace(s))
+		if s == "" {
+			continue
+		}
+		if !strings.HasPrefix(s, ".") {
+			s = "." + s
+		}
+		suffixSet[s] = struct{}{}
+	}
+	if len(suffixSet) == 0 {
+		for _, s := range defaultGzipSuffixes {
+			suffixSet[s] = struct{}{}
+		}
+	}
+
+	return filepath.Walk(processPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			// 记录日志，跳过
+			LogInfo("gzip pre-compress skip %s: %v", path, err)
+			if info != nil && info.IsDir() {
+				return filepath.SkipDir // 跳过这个无法进入的目录
+			}
+			return nil // 跳过这个文件，继续
+		}
+		if info.IsDir() {
+			return nil
+		}
+
+		name := strings.ToLower(info.Name())
+		if strings.HasSuffix(name, ".gz") {
+			return nil
+		}
+
+		ext := strings.ToLower(filepath.Ext(name))
+		if _, ok := suffixSet[ext]; !ok {
+			return nil
+		}
+
+		// 小于阈值 → 跳过
+		if minSize >= 0 && info.Size() < minSize {
+			LogInfo("gzip pre-compress file size lower than %v(bytes), jump compress: %v", minSize, path)
+			return nil
+		}
+
+		dstPath := path + ".gz"
+
+		// 开启了强制覆盖，先删除
+		if opts.ForceCover {
+			if _, err := os.Stat(dstPath); err == nil {
+				os.Remove(dstPath)
+			}
+		}
+
+		// 执行压缩
+		ret := GzipCompressFile(path, dstPath, info)
+
+		// 如果开启了，删除目标大小大于源大小的，那就检测删除
+		if opts.RemoveIfLarger {
+			if dstInfo, err := os.Stat(dstPath); err == nil {
+				if info.Size() < dstInfo.Size() {
+					os.Remove(dstPath)
+					LogInfo("gzip pre-compress target file size gather than source size, remove target: %v", dstPath)
+				}
+			}
+
+		}
+
+		return ret
+	})
+}
+
+// GzipCompressFile 将 src 压缩为 dst。
+// 若 dst 已存在且比 src 新，则跳过（增量压缩）。
+func GzipCompressFile(src, dst string, srcInfo os.FileInfo) error {
+	// 增量：已有的 .gz 比源文件新，就跳过
+	if dstInfo, err := os.Stat(dst); err == nil {
+		if !dstInfo.ModTime().Before(srcInfo.ModTime()) {
+			return nil
+		}
+	}
+
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open src %s: %w", src, err)
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("create dst %s: %w", dst, err)
+	}
+
+	success := false
+	defer func() {
+		out.Close()
+		if !success {
+			_ = os.Remove(dst)
+		}
+	}()
+
+	// 预压缩场景追求压缩率
+	gw, err := gogzip.NewWriterLevel(out, gogzip.BestCompression)
+	if err != nil {
+		return err
+	}
+
+	if _, err = io.Copy(gw, in); err != nil {
+		gw.Close()
+		return fmt.Errorf("compress %s: %w", src, err)
+	}
+	if err = gw.Close(); err != nil {
+		return fmt.Errorf("close gzip writer %s: %w", src, err)
+	}
+	if err = out.Close(); err != nil {
+		return fmt.Errorf("close dst %s: %w", dst, err)
+	}
+
+	_ = os.Chtimes(dst, srcInfo.ModTime(), srcInfo.ModTime())
+	success = true
+	return nil
 }
 
 // 预压缩gz静态资源响应中间件

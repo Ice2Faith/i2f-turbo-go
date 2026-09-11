@@ -8,7 +8,14 @@ goboot:
     bannerPath: ./banner.txt
     staticResources:
       enable: true
-      disablePreCompressGzip: false
+      disablePreCompressGzipHandler: false
+      preCompressGzip:
+        enable: false
+        options:
+          minByteSize: 256
+          removeIfLarger: true
+          forceCover: true
+          suffixes: []
       items:
         - urlPath: /web
           filePath: ./web/
