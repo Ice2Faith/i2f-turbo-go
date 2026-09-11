@@ -1081,7 +1081,7 @@ func GetConfigApplication(config *GobootConfig, listener *GobootLifecycleListene
 		}
 		// 处理404时的资源的try files处理
 		engine.NoRoute(func(c *gin.Context) {
-			reqPath := c.Request.URL.Path
+			reqPath := path.Clean(c.Request.URL.Path)
 			if !strings.HasSuffix(reqPath, "/") {
 				reqPath = reqPath + "/"
 			}
@@ -1303,41 +1303,46 @@ func GzipCompressFile(src, dst string, srcInfo os.FileInfo) error {
 	return nil
 }
 
+// 是否支持预压缩gzip响应
+func SupportResponsePreCompressGzip(c *gin.Context) bool {
+	// 非GET|HEAD请求，跳过
+	if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+		return false
+	}
+
+	// range 请求，跳过
+	if c.GetHeader("Range") != "" {
+		return false
+	}
+
+	// 客户端不支持 gzip，跳过
+	if !strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") {
+		return false
+	}
+
+	return true
+}
+
 // 预压缩gz静态资源响应中间件
 func PreCompressGzipFileResponseMiddleware(rootUrlPath string, rootFilePath string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 非GET|HEAD请求，跳过
-		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
-			c.Next()
-			return
-		}
-
-		// range 请求，跳过
-		if c.GetHeader("Range") != "" {
-			c.Next()
-			return
-		}
-
-		// 客户端不支持 gzip，跳过
-		if !strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") {
+		if !SupportResponsePreCompressGzip(c) {
 			c.Next()
 			return
 		}
 
 		// 路径前缀不匹配，跳过
-		urlPath := c.Request.URL.Path
+		urlPath := path.Clean(c.Request.URL.Path)
 		if !strings.HasPrefix(urlPath, rootUrlPath) {
 			c.Next()
 			return
 		}
 
 		filePath := urlPath[len(rootUrlPath):]
-		fullPath := filepath.Join(rootFilePath, filePath)
 
 		// 检查文件是否在允许的目录内
-		allowedPath, _ := filepath.Abs(rootFilePath)
-		absPath, _ := filepath.Abs(fullPath)
-		if !strings.HasPrefix(absPath, allowedPath) {
+		fullPath, err := GetSafeAccessFilePath(rootFilePath, filePath)
+		if err != nil {
 			c.Next()
 			return
 		}
@@ -1406,7 +1411,7 @@ func MappingMiddleware(mapping Mapping, boot *GobootApplication) gin.HandlerFunc
 	return func(c *gin.Context) {
 		hasMatched := false
 		// 检查路径前缀匹配
-		urlPath := c.Request.URL.Path
+		urlPath := path.Clean(c.Request.URL.Path)
 		for _, item := range mapping.Items {
 			if strings.HasPrefix(urlPath, item) {
 				hasMatched = true
@@ -1725,7 +1730,7 @@ func ProxyMiddleware(proxy Proxy) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		hasMatched := false
 		// 检查路径前缀匹配
-		urlPath := c.Request.URL.Path
+		urlPath := path.Clean(c.Request.URL.Path)
 		for _, item := range proxy.Items {
 			if strings.HasPrefix(urlPath, item.Path) {
 				hasMatched = true
@@ -1901,7 +1906,9 @@ func isDirOrSymlinkToDir(path string) bool {
 }
 
 func ListFiles(fullPath string, rootPath string) ([]FileInfoItem, error) {
-
+	fullPath, _ = filepath.Abs(fullPath)
+	rootPath, _ = filepath.Abs(rootPath)
+	
 	var files []FileInfoItem
 
 	items, err := os.ReadDir(fullPath)
@@ -1913,10 +1920,10 @@ func ListFiles(fullPath string, rootPath string) ([]FileInfoItem, error) {
 		}
 
 		// 获取文件完整路径
-		path := filepath.Join(fullPath, info.Name())
+		nextPath := filepath.Join(fullPath, info.Name())
 
 		// 获取相对路径
-		relPath, err := filepath.Rel(rootPath, path)
+		relPath, err := filepath.Rel(rootPath, nextPath)
 		if err != nil {
 			return files, err
 		}
@@ -1927,7 +1934,7 @@ func ListFiles(fullPath string, rootPath string) ([]FileInfoItem, error) {
 			Name:       info.Name(),
 			Size:       info.Size(),
 			SizeText:   ConvertAsHumanSizeText(info.Size()),
-			IsDir:      isDirOrSymlinkToDir(path),
+			IsDir:      isDirOrSymlinkToDir(nextPath),
 			ModifyTime: info.ModTime().Format("2006-01-02 15:04:05"),
 		})
 	}
@@ -1949,6 +1956,45 @@ func SliceContains(list []string, elem string) bool {
 		}
 	}
 	return false
+}
+
+// 提供安全的访问rootPath下的子路径的工具，基于文件系统路径计算
+func GetSafeAccessFilePath(rootPath string, filePath string) (string, error) {
+	fullPath := filepath.Join(rootPath, filePath)
+	allowedPath, _ := filepath.Abs(rootPath)
+	absPath, _ := filepath.Abs(fullPath)
+	checkedRelPath, err := filepath.Rel(allowedPath, absPath)
+	if err != nil || strings.HasPrefix(checkedRelPath, "..") || filepath.IsAbs(checkedRelPath) {
+		return "", fmt.Errorf("illegal access path!")
+	}
+	return absPath, nil
+}
+
+// 将资源释放到dstDir
+func ExtractAllFsToDir(fsys fs.FS, destDir string) error {
+	return fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// fs.FS 的路径始终用 '/' 分隔，需转成当前系统的分隔符
+		target := filepath.Join(destDir, filepath.FromSlash(path))
+
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+
+		// 注意：这里要用 fs.ReadFile，而不是 fsys.ReadFile
+		data, err := fs.ReadFile(fsys, path)
+		if err != nil {
+			return err
+		}
+
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o644)
+	})
 }
 
 func FileServerMiddleware(server FileServer) gin.HandlerFunc {
@@ -1986,6 +2032,22 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 			LogInfo("file-server enabled download api: GET %v/{subPath}[?type=inline], such GET %v/video/dog/dog.mp4 to download file, GET %v/video/dog/dog.mp4?type=inline to preview in browser", pathDownload, pathDownload, pathDownload)
 		}
 	}
+	// 解压释放资源到临时路径
+	releasePath := "./tmp/public"
+	if server.EmbedStaticFs != nil {
+		_ = os.MkdirAll(filepath.Dir(releasePath), 0o755)
+
+		if err := ExtractAllFsToDir(server.EmbedStaticFs, releasePath); err == nil {
+			server.EmbedStaticFs = os.DirFS(releasePath)
+
+			_ = GzipCompressWebResources(releasePath, GzipOptions{
+				MinByteSize:    0,
+				RemoveIfLarger: true,
+				ForceCover:     false,
+			})
+		}
+	}
+
 	return func(c *gin.Context) {
 		// 如果未开启文件服务，直接跳过
 		if !server.Enable {
@@ -1993,9 +2055,16 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 			return
 		}
 		// 检查路径前缀匹配
-		urlPath := c.Request.URL.Path
+		urlPath := path.Clean(c.Request.URL.Path)
 		if server.EmbedStaticFs != nil && strings.HasPrefix(urlPath, pathPublic) {
 			filePath := urlPath[len(pathPublic):]
+
+			// 安全校验：确保 fullPath 在 rootFilePath 下
+			_, err := GetSafeAccessFilePath(releasePath, filePath)
+			if err != nil {
+				c.JSON(500, ApiError(500, filePath+" not allow access!"))
+				return
+			}
 
 			if strings.Contains(filePath, "/lib/") || strings.Contains(filePath, "/libs/") {
 				// 设置缓存7天
@@ -2009,6 +2078,31 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 
 			httpFS := http.FS(server.EmbedStaticFs)
 
+			// 探测预压缩的 .gz 文件
+			if SupportResponsePreCompressGzip(c) {
+				gzPath := filePath + ".gz"
+				if f, err := httpFS.Open(gzPath); err == nil {
+					// 关闭探测时打开的文件句柄
+					if stat, statErr := f.Stat(); statErr == nil && !stat.IsDir() {
+						_ = f.Close()
+
+						// 设置压缩相关响应头
+						c.Header("Content-Encoding", "gzip")
+						// 由于是动态设置，避免中间件或代理再次压缩
+						c.Header("Vary", "Accept-Encoding")
+
+						// 根据原始文件扩展名设置 Content-Type（否则浏览器可能无法识别）
+						if ct := mime.TypeByExtension(path.Ext(filePath)); ct != "" {
+							c.Header("Content-Type", ct)
+						}
+
+						c.FileFromFS(gzPath, httpFS)
+						return
+					}
+					_ = f.Close()
+				}
+			}
+
 			c.FileFromFS(filePath, httpFS)
 			return
 		}
@@ -2020,16 +2114,14 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 
 			filePath := urlPath[len(pathBrowser):]
 			LogInfo("goboot file-server, browser path: %v", filePath)
-			fullPath := filepath.Join(rootPath, filePath)
-			regularFilePath := strings.ReplaceAll(filePath, "\\", "/")
 
-			// 检查文件是否在允许的目录内
-			allowedPath, _ := filepath.Abs(rootPath)
-			absPath, _ := filepath.Abs(fullPath)
-			if !strings.HasPrefix(absPath, allowedPath) {
+			// 安全校验：确保 fullPath 在 rootFilePath 下
+			fullPath, err := GetSafeAccessFilePath(rootPath, filePath)
+			if err != nil {
 				c.JSON(500, ApiError(500, filePath+" not allow access!"))
 				return
 			}
+			regularFilePath := strings.ReplaceAll(filePath, "\\", "/")
 
 			// 检查文件是否存在
 			info, err := os.Stat(fullPath)
@@ -2048,6 +2140,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 
 			if err != nil {
 				c.JSON(500, ApiError(500, filePath+" list error!"))
+				LogError("list error: %v", err)
 				return
 			}
 
@@ -2605,12 +2698,10 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 
 			filePath := urlPath[len(pathList):]
 			LogInfo("goboot file-server, list path: %v", filePath)
-			fullPath := filepath.Join(rootPath, filePath)
 
 			// 检查文件是否在允许的目录内
-			allowedPath, _ := filepath.Abs(rootPath)
-			absPath, _ := filepath.Abs(fullPath)
-			if !strings.HasPrefix(absPath, allowedPath) {
+			fullPath, err := GetSafeAccessFilePath(rootPath, filePath)
+			if err != nil {
 				c.JSON(200, ApiError(500, filePath+" not allow access!"))
 				return
 			}
@@ -2641,12 +2732,10 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 		if !server.DisableUpload && strings.HasPrefix(urlPath, pathUpload) {
 			filePath := urlPath[len(pathUpload):]
 			LogInfo("goboot file-server, upload path: %v", filePath)
-			fullPath := filepath.Join(rootPath, filePath)
 
 			// 检查文件是否在允许的目录内
-			allowedPath, _ := filepath.Abs(rootPath)
-			absPath, _ := filepath.Abs(fullPath)
-			if !strings.HasPrefix(absPath, allowedPath) {
+			fullPath, err := GetSafeAccessFilePath(rootPath, filePath)
+			if err != nil {
 				c.JSON(500, ApiError(500, filePath+" not allow access!"))
 				return
 			}
@@ -2682,12 +2771,9 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 			filePath := urlPath[len(pathDownload):]
 			LogInfo("goboot file-server, download path: %v", filePath)
 
-			fullPath := filepath.Join(rootPath, filePath)
-
 			// 检查文件是否在允许的目录内
-			allowedPath, _ := filepath.Abs(rootPath)
-			absPath, _ := filepath.Abs(fullPath)
-			if !strings.HasPrefix(absPath, allowedPath) {
+			fullPath, err := GetSafeAccessFilePath(rootPath, filePath)
+			if err != nil {
 				c.JSON(500, ApiError(500, filePath+" not allow access!"))
 				return
 			}
