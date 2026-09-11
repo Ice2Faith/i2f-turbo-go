@@ -924,13 +924,23 @@ func GetConfigApplication(config *GobootConfig, listener *GobootLifecycleListene
 			if _, err := os.Stat(staticItem.FilePath); os.IsNotExist(err) {
 				os.MkdirAll(staticItem.FilePath, 0777)
 			}
-			// 启动协程异步进行预压缩
-			go func() {
-				if err := GzipCompressWebResources(staticItem.FilePath, gzipOptions); err != nil {
-					LogInfo("gzip pre-compress file error: %v", err)
-				}
-				LogInfo("goboot finished static resources pre-compress gzip, process path: %v", staticItem.FilePath)
-			}()
+			// 重新建立新变量给defer/goroutine使用
+			compressPath := staticItem.FilePath
+			// 延迟到应用准备完毕开始执行
+			if listener.OnBeforeRun == nil {
+				listener.OnBeforeRun = []GobootListener{}
+			}
+			listener.OnBeforeRun = append(listener.OnBeforeRun, func(boot *GobootApplication) {
+				// 启动协程异步进行预压缩
+				go func() {
+					time.Sleep(5 * time.Second)
+					if err := GzipCompressWebResources(compressPath, gzipOptions); err != nil {
+						LogInfo("gzip pre-compress file error: %v", err)
+					}
+					LogInfo("goboot finished static resources pre-compress gzip, process path: %v", compressPath)
+				}()
+			})
+
 		}
 
 	}
@@ -3345,7 +3355,7 @@ func (boot *GobootApplication) Run() {
 		}
 	}
 
-	LogInfo("goboot brfore banner.")
+	LogInfo("goboot before banner.")
 	invokeListeners(boot, boot.Listeners.OnBeforeBanner)
 
 	if server.BannerPath != "" {
