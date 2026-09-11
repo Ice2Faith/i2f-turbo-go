@@ -11,6 +11,7 @@ rm -rf output
 
 echo build ...
 mkdir output
-# gox -os "windows linux darwin" -arch "386 amd64 arm64" -output "output/{{.OS}}-{{.Arch}}/goboot"
+# gox -parallel=-1 -os "windows linux darwin" -arch "386 amd64 arm64" -output "output/{{.OS}}-{{.Arch}}/goboot"
+# -parallel=-1        Amount of parallelism, defaults to number of CPUs
 
-gox -osarch "windows/386 windows/amd64 linux/386 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64" -output "output/{{.OS}}-{{.Arch}}/goboot"
+gox -parallel=2 -osarch "windows/386 windows/amd64 linux/386 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64" -output "output/{{.OS}}-{{.Arch}}/goboot"
