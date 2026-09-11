@@ -20,6 +20,7 @@ gox -parallel=2 -osarch "windows/386 windows/amd64 linux/386 linux/amd64 linux/a
 echo archive ...
 copy output\windows-amd64\goboot.exe output\goboot.exe 
 copy output\linux-amd64\goboot output\goboot.elf
+copy output\darwin-amd64\goboot output\goboot.macos
 copy *.yml output\
 copy *.sh output\
 copy *.bat output\

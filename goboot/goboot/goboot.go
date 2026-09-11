@@ -71,7 +71,14 @@ import (
 )
 
 //go:embed assets/*
-var assetsFiles embed.FS
+var EmbedAssetsFs embed.FS
+
+//go:embed public/*
+var EmbedPublicFiles embed.FS
+
+var EmbedPublicSubFs, _ = fs.Sub(EmbedPublicFiles, "public")
+
+var EmbedPublicHttpFs = http.FS(EmbedPublicSubFs)
 
 // /////////////////////////////////////////////////////////
 // goboot 默认配置区
@@ -958,6 +965,12 @@ func GetConfigApplication(config *GobootConfig, listener *GobootLifecycleListene
 		}
 	}
 
+	// 文件服务器的gzip文件预压缩处理
+	if server.FileServer.Enable &&
+		!server.StaticResources.DisablePreCompressGzipHandler{
+		engine.Use(FileServerPreCompressGzipMiddleware(server.FileServer))
+	}
+
 	// 配置gzip
 	if server.Gzip.Enable {
 		LogInfo("goboot enable gzip.")
@@ -1839,7 +1852,6 @@ type FileServer struct {
 	Enable           bool   `yaml:"enable"`
 	RootPath         string `yaml:"rootPath"` // 文件根路径
 	UrlPath          string `yaml:"urlPath"`
-	EmbedStaticFs    fs.FS
 	DisableUpload    bool `yaml:"disableUpload"`    // 是否禁止上传
 	DisableDownload  bool `yaml:"disableDownload"`  // 是否禁止下载
 	DisableList      bool `yaml:"disableList"`      // 是否禁止举出文件
@@ -1997,6 +2009,116 @@ func ExtractAllFsToDir(fsys fs.FS, destDir string) error {
 	})
 }
 
+
+var _fileServerPublicFs http.FileSystem
+func GetFileServerHttpFs() (http.FileSystem,string){
+	// 解压释放资源到临时路径
+	releasePath := "./.tmp-goboot/public"
+
+	if _fileServerPublicFs!=nil{
+		return _fileServerPublicFs,releasePath
+	}
+
+	subStaticFs := EmbedPublicSubFs
+
+	_ = os.MkdirAll(filepath.Dir(releasePath), 0o755)
+
+	if err := ExtractAllFsToDir(subStaticFs, releasePath); err == nil {
+		subStaticFs = os.DirFS(releasePath)
+
+		_ = GzipCompressWebResources(releasePath, GzipOptions{
+			MinByteSize:    0,
+			RemoveIfLarger: true,
+			ForceCover:     false,
+		})
+	}
+
+
+	_fileServerPublicFs = http.FS(subStaticFs)
+
+	return _fileServerPublicFs,releasePath
+}
+
+func FileServerPreCompressGzipMiddleware(server FileServer) gin.HandlerFunc {
+
+	pathBase := server.UrlPath
+	if pathBase == "" {
+		pathBase = "/file-server"
+	}
+	pathBase = strings.TrimSuffix(pathBase, "/")
+
+	if !strings.HasPrefix(pathBase, "/") {
+		pathBase = "/" + pathBase
+	}
+	if pathBase == "/" {
+		pathBase = ""
+	}
+	pathPublic := pathBase + "/public"
+
+	publicHttpFs,releasePath := GetFileServerHttpFs()
+
+
+	return func(c *gin.Context) {
+		// 如果未开启文件服务，直接跳过
+		if !server.Enable {
+			c.Next()
+			return
+		}
+		// 检查路径前缀匹配
+		urlPath := path.Clean(c.Request.URL.Path)
+		if strings.HasPrefix(urlPath, pathPublic) {
+			filePath := urlPath[len(pathPublic):]
+
+			// 安全校验：确保 fullPath 在 rootFilePath 下
+			_, err := GetSafeAccessFilePath(releasePath, filePath)
+			if err != nil {
+				c.JSON(500, ApiError(500, filePath+" not allow access!"))
+				return
+			}
+
+
+			if strings.Contains(filePath, "/lib/") || strings.Contains(filePath, "/libs/") {
+				// 设置缓存7天
+				c.Header("Cache-Control", "public, max-age=604800")
+				c.Header("Expires", time.Now().Add(7*24*time.Hour).Format(http.TimeFormat))
+			} else {
+				// 设置缓存1天
+				c.Header("Cache-Control", "public, max-age=86400")
+				c.Header("Expires", time.Now().Add(24*time.Hour).Format(http.TimeFormat))
+			}
+
+			// 探测预压缩的 .gz 文件
+			if SupportResponsePreCompressGzip(c) {
+				gzPath := filePath + ".gz"
+				if f, err := publicHttpFs.Open(gzPath); err == nil {
+					defer f.Close()
+					// 关闭探测时打开的文件句柄
+					if stat, statErr := f.Stat(); statErr == nil && !stat.IsDir() {
+
+						// 设置压缩相关响应头
+						c.Header("Content-Encoding", "gzip")
+						// 由于是动态设置，避免中间件或代理再次压缩
+						c.Header("Vary", "Accept-Encoding")
+
+						// 根据原始文件扩展名设置 Content-Type（否则浏览器可能无法识别）
+						if ct := mime.TypeByExtension(path.Ext(filePath)); ct != "" {
+							c.Header("Content-Type", ct)
+						}
+
+						c.FileFromFS(gzPath, publicHttpFs)
+						c.Abort()
+						return
+					}
+				}
+			}
+
+		}
+
+		c.Next()
+		return
+	}
+}
+
 func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 
 	pathBase := server.UrlPath
@@ -2032,21 +2154,8 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 			LogInfo("file-server enabled download api: GET %v/{subPath}[?type=inline], such GET %v/video/dog/dog.mp4 to download file, GET %v/video/dog/dog.mp4?type=inline to preview in browser", pathDownload, pathDownload, pathDownload)
 		}
 	}
-	// 解压释放资源到临时路径
-	releasePath := "./tmp/public"
-	if server.EmbedStaticFs != nil {
-		_ = os.MkdirAll(filepath.Dir(releasePath), 0o755)
 
-		if err := ExtractAllFsToDir(server.EmbedStaticFs, releasePath); err == nil {
-			server.EmbedStaticFs = os.DirFS(releasePath)
-
-			_ = GzipCompressWebResources(releasePath, GzipOptions{
-				MinByteSize:    0,
-				RemoveIfLarger: true,
-				ForceCover:     false,
-			})
-		}
-	}
+	publicHttpFs := EmbedPublicHttpFs
 
 	return func(c *gin.Context) {
 		// 如果未开启文件服务，直接跳过
@@ -2056,15 +2165,8 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 		}
 		// 检查路径前缀匹配
 		urlPath := path.Clean(c.Request.URL.Path)
-		if server.EmbedStaticFs != nil && strings.HasPrefix(urlPath, pathPublic) {
+		if  strings.HasPrefix(urlPath, pathPublic) {
 			filePath := urlPath[len(pathPublic):]
-
-			// 安全校验：确保 fullPath 在 rootFilePath 下
-			_, err := GetSafeAccessFilePath(releasePath, filePath)
-			if err != nil {
-				c.JSON(500, ApiError(500, filePath+" not allow access!"))
-				return
-			}
 
 			if strings.Contains(filePath, "/lib/") || strings.Contains(filePath, "/libs/") {
 				// 设置缓存7天
@@ -2076,34 +2178,8 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 				c.Header("Expires", time.Now().Add(24*time.Hour).Format(http.TimeFormat))
 			}
 
-			httpFS := http.FS(server.EmbedStaticFs)
 
-			// 探测预压缩的 .gz 文件
-			if SupportResponsePreCompressGzip(c) {
-				gzPath := filePath + ".gz"
-				if f, err := httpFS.Open(gzPath); err == nil {
-					// 关闭探测时打开的文件句柄
-					if stat, statErr := f.Stat(); statErr == nil && !stat.IsDir() {
-						_ = f.Close()
-
-						// 设置压缩相关响应头
-						c.Header("Content-Encoding", "gzip")
-						// 由于是动态设置，避免中间件或代理再次压缩
-						c.Header("Vary", "Accept-Encoding")
-
-						// 根据原始文件扩展名设置 Content-Type（否则浏览器可能无法识别）
-						if ct := mime.TypeByExtension(path.Ext(filePath)); ct != "" {
-							c.Header("Content-Type", ct)
-						}
-
-						c.FileFromFS(gzPath, httpFS)
-						return
-					}
-					_ = f.Close()
-				}
-			}
-
-			c.FileFromFS(filePath, httpFS)
+			c.FileFromFS(filePath, publicHttpFs)
 			return
 		}
 		if !server.DisableBrowser && strings.HasPrefix(urlPath, pathBrowser) {
@@ -3063,7 +3139,7 @@ func ExtractAssetFile(embedPath, localPath string) error {
 	}
 
 	// 打开嵌入文件
-	src, err := assetsFiles.Open(embedPath)
+	src, err := EmbedAssetsFs.Open(embedPath)
 	if err != nil {
 		return fmt.Errorf("open embed file %s error: %w", embedPath, err)
 	}
