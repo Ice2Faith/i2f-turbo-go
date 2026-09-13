@@ -384,6 +384,7 @@ type StaticResourcesItem struct {
 type StaticResources struct {
 	Enable                        bool                  `yaml:"enable"`
 	DisablePreCompressGzipHandler bool                  `yaml:"disablePreCompressGzipHandler"`
+	DisableIndexHtmlRedirect      bool                  `yaml:"disableIndexHtmlRedirect"`
 	PreCompressGzip               PreCompressGzipConfig `yaml:"preCompressGzip"`
 	Items                         []StaticResourcesItem `yaml:"items"`
 }
@@ -967,7 +968,7 @@ func GetConfigApplication(config *GobootConfig, listener *GobootLifecycleListene
 
 	// 文件服务器的gzip文件预压缩处理
 	if server.FileServer.Enable &&
-		!server.StaticResources.DisablePreCompressGzipHandler{
+		!server.StaticResources.DisablePreCompressGzipHandler {
 		engine.Use(FileServerPreCompressGzipMiddleware(server.FileServer))
 	}
 
@@ -1084,6 +1085,13 @@ func GetConfigApplication(config *GobootConfig, listener *GobootLifecycleListene
 
 	// 配置静态资源，最后配置路由
 	if server.StaticResources.Enable {
+		// 拦截以 /index.html 结尾的请求，避免 http.FileServer 的 301 重定向
+		if server.StaticResources.DisableIndexHtmlRedirect {
+			for _, staticItem := range server.StaticResources.Items {
+				LogInfo("goboot disable static resources index.html redirect, mapping: %v --> %v", staticItem.UrlPath, staticItem.FilePath)
+				engine.Use(IndexHtmlFileResponseMiddleware(staticItem.UrlPath, staticItem.FilePath))
+			}
+		}
 		for _, staticItem := range server.StaticResources.Items {
 			LogInfo("goboot enable static resources, mapping: %v --> %v", staticItem.UrlPath, staticItem.FilePath)
 			if _, err := os.Stat(staticItem.FilePath); os.IsNotExist(err) {
@@ -1115,6 +1123,13 @@ func GetConfigApplication(config *GobootConfig, listener *GobootLifecycleListene
 					_, err := os.Stat(tryFile)
 					if err == nil {
 						LogInfo("[try files] url: %v try to %v", reqPath, urlPath+fileItem)
+						// 拦截以 /index.html 结尾的请求，避免 http.ServeFile 的 301 重定向
+						if server.StaticResources.DisableIndexHtmlRedirect &&
+							strings.HasSuffix(path.Clean(c.Request.URL.Path), "/index.html") {
+							if ServeFileContent(c, tryFile) {
+								return
+							}
+						}
 						c.File(tryFile)
 					}
 				}
@@ -1401,6 +1416,74 @@ func PreCompressGzipFileResponseMiddleware(rootUrlPath string, rootFilePath stri
 		// 阻止 engine.Static 再写一次响应
 		c.Abort()
 	}
+}
+
+// index.html文件直接响应中间件
+// net/http 的 http.FileServer 会将任何以 /index.html 结尾的请求
+// 301 重定向到所在目录（即去掉末尾的 index.html），该中间件拦截此类请求
+// 直接以文件内容进行响应（200），从而保持URL不变
+// 由 StaticResources.DisableIndexHtmlRedirect 控制是否启用
+func IndexHtmlFileResponseMiddleware(rootUrlPath string, rootFilePath string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// 非GET|HEAD请求，跳过
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+			c.Next()
+			return
+		}
+
+		// 只处理以 /index.html 结尾的请求
+		urlPath := path.Clean(c.Request.URL.Path)
+		if !strings.HasSuffix(urlPath, "/index.html") {
+			c.Next()
+			return
+		}
+
+		// 路径前缀不匹配，跳过
+		prefix := rootUrlPath
+		if !strings.HasSuffix(prefix, "/") {
+			prefix = prefix + "/"
+		}
+		if !strings.HasPrefix(urlPath, prefix) {
+			c.Next()
+			return
+		}
+
+		filePath := urlPath[len(rootUrlPath):]
+
+		// 检查文件是否在允许的目录内
+		fullPath, err := GetSafeAccessFilePath(rootFilePath, filePath)
+		if err != nil {
+			c.Next()
+			return
+		}
+
+		// 文件不存在或者响应失败时，交由后续的静态资源处理
+		if !ServeFileContent(c, fullPath) {
+			c.Next()
+		}
+	}
+}
+
+// 直接以文件内容响应请求，成功响应返回true
+// 使用 http.ServeContent 输出文件，避免 http.FileServer/http.ServeFile
+// 对以 /index.html 结尾请求的301重定向
+func ServeFileContent(c *gin.Context, fullPath string) bool {
+	file, err := os.Open(fullPath)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		return false
+	}
+
+	http.ServeContent(c.Writer, c.Request, info.Name(), info.ModTime(), file)
+
+	// 阻止后续的文件服务再写一次响应
+	c.Abort()
+	return true
 }
 
 // 限流请求中间件
@@ -1852,12 +1935,12 @@ type FileServer struct {
 	Enable           bool   `yaml:"enable"`
 	RootPath         string `yaml:"rootPath"` // 文件根路径
 	UrlPath          string `yaml:"urlPath"`
-	DisableUpload    bool `yaml:"disableUpload"`    // 是否禁止上传
-	DisableDownload  bool `yaml:"disableDownload"`  // 是否禁止下载
-	DisableList      bool `yaml:"disableList"`      // 是否禁止举出文件
-	DisableBrowser   bool `yaml:"disableBrowser"`   // 是否禁止浏览文件
-	DisableOffice    bool `yaml:"disableOffice"`    // 是否禁止Office文档进行自动格式转移以进行预览
-	DisableOfficeCom bool `yaml:"disableOfficeCom"` // 是否禁止Office文档转换时使用windows下的COM组件进行转换
+	DisableUpload    bool   `yaml:"disableUpload"`    // 是否禁止上传
+	DisableDownload  bool   `yaml:"disableDownload"`  // 是否禁止下载
+	DisableList      bool   `yaml:"disableList"`      // 是否禁止举出文件
+	DisableBrowser   bool   `yaml:"disableBrowser"`   // 是否禁止浏览文件
+	DisableOffice    bool   `yaml:"disableOffice"`    // 是否禁止Office文档进行自动格式转移以进行预览
+	DisableOfficeCom bool   `yaml:"disableOfficeCom"` // 是否禁止Office文档转换时使用windows下的COM组件进行转换
 }
 
 type FileInfoItem struct {
@@ -1920,7 +2003,7 @@ func isDirOrSymlinkToDir(path string) bool {
 func ListFiles(fullPath string, rootPath string) ([]FileInfoItem, error) {
 	fullPath, _ = filepath.Abs(fullPath)
 	rootPath, _ = filepath.Abs(rootPath)
-	
+
 	var files []FileInfoItem
 
 	items, err := os.ReadDir(fullPath)
@@ -2009,14 +2092,14 @@ func ExtractAllFsToDir(fsys fs.FS, destDir string) error {
 	})
 }
 
-
 var _fileServerPublicFs http.FileSystem
-func GetFileServerHttpFs() (http.FileSystem,string){
+
+func GetFileServerHttpFs() (http.FileSystem, string) {
 	// 解压释放资源到临时路径
 	releasePath := "./.goboot/tmp/public"
 
-	if _fileServerPublicFs!=nil{
-		return _fileServerPublicFs,releasePath
+	if _fileServerPublicFs != nil {
+		return _fileServerPublicFs, releasePath
 	}
 
 	subStaticFs := EmbedPublicSubFs
@@ -2033,10 +2116,9 @@ func GetFileServerHttpFs() (http.FileSystem,string){
 		})
 	}
 
-
 	_fileServerPublicFs = http.FS(subStaticFs)
 
-	return _fileServerPublicFs,releasePath
+	return _fileServerPublicFs, releasePath
 }
 
 func FileServerPreCompressGzipMiddleware(server FileServer) gin.HandlerFunc {
@@ -2055,8 +2137,7 @@ func FileServerPreCompressGzipMiddleware(server FileServer) gin.HandlerFunc {
 	}
 	pathPublic := pathBase + "/public"
 
-	publicHttpFs,releasePath := GetFileServerHttpFs()
-
+	publicHttpFs, releasePath := GetFileServerHttpFs()
 
 	return func(c *gin.Context) {
 		// 如果未开启文件服务，直接跳过
@@ -2075,7 +2156,6 @@ func FileServerPreCompressGzipMiddleware(server FileServer) gin.HandlerFunc {
 				c.JSON(500, ApiError(500, filePath+" not allow access!"))
 				return
 			}
-
 
 			if strings.Contains(filePath, "/lib/") || strings.Contains(filePath, "/libs/") {
 				// 设置缓存7天
@@ -2165,7 +2245,7 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 		}
 		// 检查路径前缀匹配
 		urlPath := path.Clean(c.Request.URL.Path)
-		if  strings.HasPrefix(urlPath, pathPublic) {
+		if strings.HasPrefix(urlPath, pathPublic) {
 			filePath := urlPath[len(pathPublic):]
 
 			if strings.Contains(filePath, "/lib/") || strings.Contains(filePath, "/libs/") {
@@ -2177,7 +2257,6 @@ func FileServerMiddleware(server FileServer) gin.HandlerFunc {
 				c.Header("Cache-Control", "public, max-age=86400")
 				c.Header("Expires", time.Now().Add(24*time.Hour).Format(http.TimeFormat))
 			}
-
 
 			c.FileFromFS(filePath, publicHttpFs)
 			return

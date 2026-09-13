@@ -9,6 +9,7 @@ goboot:
     staticResources:
       enable: true
       disablePreCompressGzipHandler: false
+      disableIndexHtmlRedirect: false
       preCompressGzip:
         enable: false
         options:
